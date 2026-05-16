@@ -1,0 +1,36 @@
+# Site configuration for the environmental-ts-data-pipeline
+# Defines areas of interest (AoI), sensors, and processing parameters.
+#
+# Template — fill in real values before running the pipeline.
+#
+# sites:
+#   - name: Mponda
+#     country: Zambia
+#     gee_asset: projects/ee-sensingclues-timeseries/assets/AoI_Mponda
+#     crs: EPSG:4326
+#     sensors:
+#       - name: sentinel2
+#         resolution: 10          # metres
+#         collection: COPERNICUS/S2_SR_HARMONIZED
+#         filter_cloud_pct: 100   # pre-filter: drop scenes with >= this % cloud cover
+#       - name: modis
+#         resolution: 500
+#         collection: MODIS/006/MOD13A1
+#     output_folder: GEE_Mponda_10m_resolution
+#
+#   - name: WL
+#     country: Zambia
+#     gee_asset: projects/ee-sensingclues-timeseries/assets/AoI_WL
+#     crs: EPSG:4326
+#     sensors:
+#       - name: sentinel2
+#         resolution: 10
+#         collection: COPERNICUS/S2_SR_HARMONIZED
+#         filter_cloud_pct: 100
+#     output_folder: GEE_WL_10m_resolution
+#
+# date_range:
+#   start_year: 2020
+#   start_month: 1
+#   end_year: null    # null = run to present
+#   end_month: null

@@ -13,6 +13,14 @@ sensors:
     collection: COPERNICUS/S2_SR_HARMONIZED
     resolutions: [100, 1000]
     start_date: '2017-03-01'
+  modis:
+    resolutions:
+      250:
+        collection: MODIS/061/MOD13Q1
+      500:
+        collection: MODIS/061/MOD13A1
+      1000:
+        collection: MODIS/061/MOD13A2
 
 legacy_data_root: C:\Users\20244650\Documents\GitHub\environmental-time-series\app\www\data\NDVI
 

@@ -7,6 +7,9 @@ Run with:
     python scripts/test_mponda_validation.py --year 2024 --month 3 --aoi Zambia --resolution 100
     python scripts/test_mponda_validation.py --year 2024 --month 3 --aoi Zambia --resolution 1000
     python scripts/test_mponda_validation.py --year 2024 --month 3 --aoi Zambia_WL --resolution 100
+    python scripts/test_mponda_validation.py --sensor modis --resolution 250 --aoi Zambia --year 2024 --month 3
+    python scripts/test_mponda_validation.py --sensor modis --resolution 500 --aoi Zambia --year 2024 --month 3
+    python scripts/test_mponda_validation.py --sensor modis --resolution 1000 --aoi Zambia --year 2024 --month 3
 """
 
 import argparse
@@ -16,7 +19,8 @@ from pathlib import Path
 from pipeline.auth import init_gee
 from pipeline.config import load_config
 from pipeline.export import download_image
-from pipeline.sentinel2 import load_aoi, monthly_composite
+from pipeline.sentinel2 import load_aoi
+from pipeline.sentinel2 import monthly_composite as s2_monthly_composite
 from pipeline.validate import compare_rasters, print_comparison, print_smoke_test, smoke_test
 
 parser = argparse.ArgumentParser(description="Validate GEE NDVI composite against legacy TIF.")
@@ -24,16 +28,18 @@ parser.add_argument("--year",       type=int, required=True,          help="Year
 parser.add_argument("--month",      type=int, required=True,          help="Month to validate (1-12)")
 parser.add_argument("--aoi",        default="Zambia",                 help="AoI key from config (default: Zambia)")
 parser.add_argument("--resolution", type=int, default=100,            help="Resolution in metres (default: 100)")
+parser.add_argument("--sensor",     default="sentinel2",              help="Sensor (sentinel2 or modis, default: sentinel2)")
 args = parser.parse_args()
 
 YEAR       = args.year
 MONTH      = args.month
 AOI        = args.aoi
 RESOLUTION = args.resolution
+SENSOR     = args.sensor
 LABEL      = f"{YEAR}-{MONTH:02d}"
 
 print("=" * 60)
-print(f"Validating NDVI composite: {LABEL}  AoI={AOI}  resolution={RESOLUTION}m")
+print(f"Validating NDVI composite: {LABEL}  AoI={AOI}  sensor={SENSOR}  resolution={RESOLUTION}m")
 print("=" * 60)
 
 config = load_config()
@@ -53,14 +59,22 @@ print("=" * 60)
 aoi = load_aoi(config["aois"][AOI]["path"])
 
 print("=" * 60)
-print(f"Step 3: Building Sentinel-2 NDVI composite ({LABEL})")
+print(f"Step 3: Building {SENSOR.upper()} NDVI composite ({LABEL})")
 print("=" * 60)
-composite = monthly_composite(aoi, YEAR, MONTH)
+
+if SENSOR == "sentinel2":
+    composite = s2_monthly_composite(aoi, YEAR, MONTH)
+elif SENSOR == "modis":
+    from pipeline.modis import monthly_composite as modis_monthly_composite
+    composite = modis_monthly_composite(aoi, YEAR, MONTH, RESOLUTION)
+else:
+    print(f"ERROR: Unknown sensor '{SENSOR}'. Supported: sentinel2, modis")
+    sys.exit(1)
 
 print("=" * 60)
 print("Step 4: Downloading NDVI composite")
 print("=" * 60)
-output_path = f"test_outputs/test_{LABEL}_NDVI_{AOI}_{RESOLUTION}m_v2.tif"
+output_path = f"test_outputs/test_{LABEL}_NDVI_{AOI}_{RESOLUTION}m_{SENSOR}_v2.tif"
 try:
     download_image(composite, aoi, output_path, scale=RESOLUTION)
 except RuntimeError as exc:
@@ -71,14 +85,26 @@ print("=" * 60)
 print("Step 5: Comparing rasters")
 print("=" * 60)
 
-# Resolve the legacy file path based on AoI + resolution.
-# Zambia_WL has no legacy file — fall back to smoke test.
 legacy_root = Path(config["legacy_data_root"])
 
-if AOI == "Zambia":
-    legacy_path = legacy_root / "Zambia" / f"{RESOLUTION}m_resolution" / f"{LABEL}_NDVI_Zambia.tif"
-else:
-    legacy_path = None  # No legacy file for WL or other new AoIs
+# Resolve legacy file path based on sensor + AoI + resolution.
+legacy_path = None
+
+if SENSOR == "sentinel2":
+    if AOI == "Zambia":
+        legacy_path = legacy_root / "Zambia" / f"{RESOLUTION}m_resolution" / f"{LABEL}_NDVI_Zambia.tif"
+    # Other AoIs (Zambia_WL, Zambia_Mponda) have no legacy S2 file — smoke-test mode
+
+elif SENSOR == "modis":
+    modis_mponda_aois = {"Zambia", "Zambia_Mponda"}
+    if AOI in modis_mponda_aois:
+        if RESOLUTION == 250:
+            legacy_path = legacy_root / "Zambia_Mponda" / "250m_resolution" / f"{LABEL}_NDVI_Zambia_Mponda.tif"
+        elif RESOLUTION == 500:
+            legacy_path = legacy_root / "Zambia_Mponda" / "500m_resolution" / f"{LABEL}_NDVI_Zambia_Mponda.tif"
+        elif RESOLUTION == 1000:
+            legacy_path = legacy_root / "Zambia_Mponda" / "MODIS_1000m_resolution" / f"{LABEL}_NDVI_Zambia_Mponda.tif"
+    # Zambia_WL has no MODIS legacy file — smoke-test mode
 
 if legacy_path is not None and legacy_path.exists():
     stats = compare_rasters(output_path, str(legacy_path))
@@ -88,8 +114,8 @@ else:
         print(f"  Legacy file not found at: {legacy_path}")
         print("  Switching to smoke-test mode.")
     else:
-        print(f"  No legacy file defined for AoI '{AOI}' — smoke-test mode.")
+        print(f"  No legacy file defined for AoI '{AOI}' + sensor '{SENSOR}' + {RESOLUTION}m — smoke-test mode.")
     stats = smoke_test(output_path)
     print_smoke_test(stats)
 
-print(f"\nDone. {LABEL}  AoI={AOI}  resolution={RESOLUTION}m")
+print(f"\nDone. {LABEL}  AoI={AOI}  sensor={SENSOR}  resolution={RESOLUTION}m")

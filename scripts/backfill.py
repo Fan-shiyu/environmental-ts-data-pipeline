@@ -7,11 +7,11 @@ from pathlib import Path
 from pipeline.auth import init_gee
 from pipeline.config import load_config
 from pipeline.export import download_image
-from pipeline.sentinel2 import load_aoi, monthly_composite
+from pipeline.sentinel2 import load_aoi, monthly_composite as s2_monthly_composite
 
 parser = argparse.ArgumentParser(description="Backfill monthly NDVI composites for a full year.")
 parser.add_argument("--aoi",        required=True, help="AoI key from config (e.g. Zambia)")
-parser.add_argument("--sensor",     required=True, help="Sensor key from config (e.g. sentinel2)")
+parser.add_argument("--sensor",     required=True, help="Sensor key from config (e.g. sentinel2, modis)")
 parser.add_argument("--resolution", required=True, type=int, help="Resolution in metres (e.g. 100)")
 parser.add_argument("--year",       required=True, type=int, help="Year to backfill (e.g. 2024)")
 args = parser.parse_args()
@@ -22,9 +22,23 @@ if args.aoi not in config["aois"]:
     print(f"ERROR: AoI '{args.aoi}' not found in config. Available: {list(config['aois'].keys())}")
     sys.exit(1)
 
-if args.sensor != "sentinel2":
+MODIS_RESOLUTIONS = {250, 500, 1000}
+S2_RESOLUTIONS = {100, 1000}
+
+if args.sensor == "sentinel2":
+    if args.resolution not in S2_RESOLUTIONS:
+        raise ValueError(
+            f"Sentinel-2 resolution {args.resolution}m not supported. Supported: {sorted(S2_RESOLUTIONS)}"
+        )
+elif args.sensor == "modis":
+    if args.resolution not in MODIS_RESOLUTIONS:
+        raise ValueError(
+            f"MODIS resolution {args.resolution}m not supported. Supported: {sorted(MODIS_RESOLUTIONS)}"
+        )
+    from pipeline.modis import monthly_composite as modis_monthly_composite
+else:
     raise NotImplementedError(
-        f"Sensor '{args.sensor}' is not yet supported. Only 'sentinel2' is implemented."
+        f"Sensor '{args.sensor}' is not supported. Supported: sentinel2, modis"
     )
 
 init_gee(config["project"])
@@ -47,7 +61,10 @@ for month in range(1, 13):
         continue
 
     try:
-        composite = monthly_composite(aoi, args.year, month)
+        if args.sensor == "sentinel2":
+            composite = s2_monthly_composite(aoi, args.year, month)
+        else:
+            composite = modis_monthly_composite(aoi, args.year, month, args.resolution)
         download_image(composite, aoi, str(output_path), scale=args.resolution)
         print(f"[{label}] downloaded")
         n_downloaded += 1

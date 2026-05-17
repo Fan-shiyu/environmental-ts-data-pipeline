@@ -112,6 +112,45 @@ def compare_rasters(new_path: str, legacy_path: str) -> dict:
     return stats
 
 
+def smoke_test(path: str) -> dict:
+    """Open a single raster and return basic stats (shape, CRS, valid pixel count, mean/min/max).
+
+    Used when no legacy comparison file exists (e.g. new AoIs like Zambia_WL).
+    """
+    with rasterio.open(path) as src:
+        data = src.read(1).astype(np.float32)
+        nodata = src.nodata
+        crs = src.crs
+        shape = src.shape
+
+    if nodata is not None:
+        data = np.where(data == nodata, np.nan, data)
+    data = np.where(np.abs(data) > 1e6, np.nan, data)
+
+    valid = ~np.isnan(data)
+    return {
+        "shape": shape,
+        "crs": str(crs),
+        "n_valid": int(valid.sum()),
+        "mean": float(np.nanmean(data)),
+        "std": float(np.nanstd(data)),
+        "min": float(np.nanmin(data)),
+        "max": float(np.nanmax(data)),
+    }
+
+
+def print_smoke_test(stats: dict) -> None:
+    """Print smoke-test stats for a raster with no legacy comparison file."""
+    print("\n  --- Smoke test (no legacy file for comparison) ---")
+    print(f"  Shape:        {stats['shape']}")
+    print(f"  CRS:          {stats['crs']}")
+    print(f"  Valid pixels: {stats['n_valid']:,}")
+    print(f"  Mean NDVI:    {stats['mean']:.4f}")
+    print(f"  Std NDVI:     {stats['std']:.4f}")
+    print(f"  Min NDVI:     {stats['min']:.4f}")
+    print(f"  Max NDVI:     {stats['max']:.4f}")
+
+
 def print_comparison(stats: dict) -> None:
     """Print the stats dict in a readable formatted block. No pass/fail verdict."""
     print("\n  --- Per-raster statistics ---")

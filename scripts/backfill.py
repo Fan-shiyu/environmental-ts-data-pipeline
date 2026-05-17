@@ -27,11 +27,6 @@ if args.sensor != "sentinel2":
         f"Sensor '{args.sensor}' is not yet supported. Only 'sentinel2' is implemented."
     )
 
-if args.resolution != 100:
-    raise NotImplementedError(
-        f"Resolution {args.resolution}m is not yet supported. Only 100m is implemented."
-    )
-
 init_gee(config["project"])
 aoi = load_aoi(config["aois"][args.aoi]["path"])
 

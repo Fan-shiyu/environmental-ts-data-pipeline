@@ -14,6 +14,8 @@ dependencies = [
     "pandas",
     "pyyaml",
     "python-dotenv",
+    "scipy",
+    "requests",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +23,9 @@ dev = [
     "pytest",
     "ruff",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["pipeline"]
 
 [tool.ruff]
 line-length = 100

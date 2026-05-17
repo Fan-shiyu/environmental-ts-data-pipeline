@@ -1,5 +1,7 @@
 """Validation: compare new outputs against existing files to detect regressions or gaps."""
 
+import math
+
 import numpy as np
 import rasterio
 from rasterio.warp import Resampling, reproject
@@ -110,6 +112,124 @@ def compare_rasters(new_path: str, legacy_path: str) -> dict:
         stats["pct_diff_gt_010"] = float(100.0 * np.mean(abs_diff > 0.10))
 
     return stats
+
+
+def compare_burned_area(new_path: str, legacy_path: str) -> dict:
+    """Compare two BurnDate rasters (MCD64A1). Returns a dict with:
+    - shape_new, shape_legacy
+    - n_burned_new, n_burned_legacy (pixels with value > 0)
+    - n_overlap (burned in both)
+    - n_only_new, n_only_legacy
+    - mean_abs_diff_days (Julian-day MAD on overlapping burned pixels; None if n_overlap == 0)
+    - pixel_area_km2 (approximate, from ref raster transform at centre latitude)
+    - total_burned_new_km2, total_burned_legacy_km2
+    """
+    with rasterio.open(new_path) as src:
+        new_data = src.read(1).astype(np.int32)
+        new_nodata = src.nodata
+        new_transform = src.transform
+        new_crs = src.crs
+        new_shape = src.shape
+
+    with rasterio.open(legacy_path) as src:
+        ref_data = src.read(1).astype(np.int32)
+        ref_nodata = src.nodata
+        ref_transform = src.transform
+        ref_crs = src.crs
+        ref_shape = src.shape
+
+    print(f"\n  New raster  -- shape: {new_shape}, CRS: {new_crs}, nodata: {new_nodata}")
+    print(f"  Ref raster  -- shape: {ref_shape}, CRS: {ref_crs}, nodata: {ref_nodata}")
+
+    grids_match = (
+        new_crs == ref_crs
+        and new_shape == ref_shape
+        and np.allclose(
+            [new_transform.a, new_transform.e, new_transform.c, new_transform.f],
+            [ref_transform.a, ref_transform.e, ref_transform.c, ref_transform.f],
+            atol=1e-8,
+        )
+    )
+
+    if not grids_match:
+        print("\n  Grids differ -- reprojecting new raster onto ref grid (nearest-neighbor) ...")
+        reprojected = np.zeros(ref_shape, dtype=np.int32)
+        with rasterio.open(new_path) as src:
+            reproject(
+                source=rasterio.band(src, 1),
+                destination=reprojected,
+                src_transform=new_transform,
+                src_crs=new_crs,
+                dst_transform=ref_transform,
+                dst_crs=ref_crs,
+                resampling=Resampling.nearest,
+                src_nodata=new_nodata,
+                dst_nodata=0,
+            )
+        new_data = reprojected
+    else:
+        print("\n  Grids match -- no reprojection needed.")
+
+    # Treat negative values (fill/water in MCD64A1 = -1) as invalid
+    if new_nodata is not None:
+        new_data = np.where(new_data == int(new_nodata), 0, new_data)
+    if ref_nodata is not None:
+        ref_data = np.where(ref_data == int(ref_nodata), 0, ref_data)
+    new_data = np.where(new_data < 0, 0, new_data)
+    ref_data = np.where(ref_data < 0, 0, ref_data)
+
+    burned_new = new_data > 0
+    burned_ref = ref_data > 0
+    overlap = burned_new & burned_ref
+
+    n_burned_new = int(burned_new.sum())
+    n_burned_ref = int(burned_ref.sum())
+    n_overlap = int(overlap.sum())
+    n_only_new = int((burned_new & ~burned_ref).sum())
+    n_only_legacy = int((burned_ref & ~burned_new).sum())
+
+    # Approximate pixel area in km² using centre latitude of the ref raster
+    centre_lat_deg = ref_transform.f + ref_transform.e * (ref_shape[0] / 2)
+    pixel_deg_x = abs(ref_transform.a)
+    pixel_deg_y = abs(ref_transform.e)
+    km_per_deg_lat = 111.32
+    km_per_deg_lon = 111.32 * math.cos(math.radians(centre_lat_deg))
+    pixel_area_km2 = pixel_deg_x * km_per_deg_lon * pixel_deg_y * km_per_deg_lat
+
+    mean_abs_diff_days = None
+    if n_overlap > 0:
+        diff = np.abs(new_data[overlap].astype(float) - ref_data[overlap].astype(float))
+        mean_abs_diff_days = float(np.mean(diff))
+
+    return {
+        "shape_new": new_shape,
+        "shape_legacy": ref_shape,
+        "n_burned_new": n_burned_new,
+        "n_burned_legacy": n_burned_ref,
+        "n_overlap": n_overlap,
+        "n_only_new": n_only_new,
+        "n_only_legacy": n_only_legacy,
+        "mean_abs_diff_days": mean_abs_diff_days,
+        "pixel_area_km2": pixel_area_km2,
+        "total_burned_new_km2": n_burned_new * pixel_area_km2,
+        "total_burned_legacy_km2": n_burned_ref * pixel_area_km2,
+    }
+
+
+def print_burned_area_comparison(stats: dict) -> None:
+    """Print burned area comparison stats. No pass/fail verdict."""
+    print("\n  --- Burned area comparison ---")
+    print(f"  {'Metric':<45} {'New':>12} {'Legacy':>12}")
+    print(f"  {'-'*70}")
+    print(f"  {'Burned pixels':<45} {stats['n_burned_new']:>12,} {stats['n_burned_legacy']:>12,}")
+    print(f"  {'Total burned area (km2)':<45} {stats['total_burned_new_km2']:>12.2f} {stats['total_burned_legacy_km2']:>12.2f}")
+    print(f"\n  Overlap (burned in both):   {stats['n_overlap']:,} pixels")
+    print(f"  Only in new:                {stats['n_only_new']:,} pixels")
+    print(f"  Only in legacy:             {stats['n_only_legacy']:,} pixels")
+    if stats["mean_abs_diff_days"] is not None:
+        print(f"  Mean abs diff (days, overlap): {stats['mean_abs_diff_days']:.2f}")
+    else:
+        print("  Mean abs diff (days): N/A (no overlapping burned pixels)")
 
 
 def smoke_test(path: str) -> dict:

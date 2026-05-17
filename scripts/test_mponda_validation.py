@@ -1,6 +1,6 @@
 """
-Validation script: compare a freshly generated GEE NDVI composite against
-the corresponding legacy TIF in the environmental-time-series Shiny app repo.
+Validation script: compare a freshly generated GEE composite against the
+corresponding legacy TIF in the environmental-time-series Shiny app repo.
 
 Run with:
     python scripts/test_mponda_validation.py --year 2024 --month 3
@@ -10,6 +10,8 @@ Run with:
     python scripts/test_mponda_validation.py --sensor modis --resolution 250 --aoi Zambia --year 2024 --month 3
     python scripts/test_mponda_validation.py --sensor modis --resolution 500 --aoi Zambia --year 2024 --month 3
     python scripts/test_mponda_validation.py --sensor modis --resolution 1000 --aoi Zambia --year 2024 --month 3
+    python scripts/test_mponda_validation.py --sensor burned_area --resolution 500 --aoi Zambia --year 2024 --month 8
+    python scripts/test_mponda_validation.py --sensor burned_area --resolution 500 --aoi Zambia_WL --year 2024 --month 8
 """
 
 import argparse
@@ -21,14 +23,21 @@ from pipeline.config import load_config
 from pipeline.export import download_image
 from pipeline.sentinel2 import load_aoi
 from pipeline.sentinel2 import monthly_composite as s2_monthly_composite
-from pipeline.validate import compare_rasters, print_comparison, print_smoke_test, smoke_test
+from pipeline.validate import (
+    compare_burned_area,
+    compare_rasters,
+    print_burned_area_comparison,
+    print_comparison,
+    print_smoke_test,
+    smoke_test,
+)
 
-parser = argparse.ArgumentParser(description="Validate GEE NDVI composite against legacy TIF.")
-parser.add_argument("--year",       type=int, required=True,          help="Year to validate")
-parser.add_argument("--month",      type=int, required=True,          help="Month to validate (1-12)")
-parser.add_argument("--aoi",        default="Zambia",                 help="AoI key from config (default: Zambia)")
-parser.add_argument("--resolution", type=int, default=100,            help="Resolution in metres (default: 100)")
-parser.add_argument("--sensor",     default="sentinel2",              help="Sensor (sentinel2 or modis, default: sentinel2)")
+parser = argparse.ArgumentParser(description="Validate GEE composite against legacy TIF.")
+parser.add_argument("--year",       type=int, required=True,           help="Year to validate")
+parser.add_argument("--month",      type=int, required=True,           help="Month to validate (1-12)")
+parser.add_argument("--aoi",        default="Zambia",                  help="AoI key from config (default: Zambia)")
+parser.add_argument("--resolution", type=int, default=100,             help="Resolution in metres (default: 100)")
+parser.add_argument("--sensor",     default="sentinel2",               help="Sensor: sentinel2, modis, burned_area (default: sentinel2)")
 args = parser.parse_args()
 
 YEAR       = args.year
@@ -39,7 +48,7 @@ SENSOR     = args.sensor
 LABEL      = f"{YEAR}-{MONTH:02d}"
 
 print("=" * 60)
-print(f"Validating NDVI composite: {LABEL}  AoI={AOI}  sensor={SENSOR}  resolution={RESOLUTION}m")
+print(f"Validating composite: {LABEL}  AoI={AOI}  sensor={SENSOR}  resolution={RESOLUTION}m")
 print("=" * 60)
 
 config = load_config()
@@ -59,7 +68,7 @@ print("=" * 60)
 aoi = load_aoi(config["aois"][AOI]["path"])
 
 print("=" * 60)
-print(f"Step 3: Building {SENSOR.upper()} NDVI composite ({LABEL})")
+print(f"Step 3: Building {SENSOR} composite ({LABEL})")
 print("=" * 60)
 
 if SENSOR == "sentinel2":
@@ -67,14 +76,26 @@ if SENSOR == "sentinel2":
 elif SENSOR == "modis":
     from pipeline.modis import monthly_composite as modis_monthly_composite
     composite = modis_monthly_composite(aoi, YEAR, MONTH, RESOLUTION)
+elif SENSOR == "burned_area":
+    from pipeline.burned_area import monthly_image as ba_monthly_image
+    try:
+        composite = ba_monthly_image(aoi, YEAR, MONTH)
+    except ValueError as exc:
+        print(f"\nERROR: {exc}")
+        sys.exit(1)
 else:
-    print(f"ERROR: Unknown sensor '{SENSOR}'. Supported: sentinel2, modis")
+    print(f"ERROR: Unknown sensor '{SENSOR}'. Supported: sentinel2, modis, burned_area")
     sys.exit(1)
 
 print("=" * 60)
-print("Step 4: Downloading NDVI composite")
+print("Step 4: Downloading composite")
 print("=" * 60)
-output_path = f"test_outputs/test_{LABEL}_NDVI_{AOI}_{RESOLUTION}m_{SENSOR}_v2.tif"
+
+if SENSOR == "burned_area":
+    output_path = f"test_outputs/test_{LABEL}_BurnedArea_{AOI}_{RESOLUTION}m_burned_area_v2.tif"
+else:
+    output_path = f"test_outputs/test_{LABEL}_NDVI_{AOI}_{RESOLUTION}m_{SENSOR}_v2.tif"
+
 try:
     download_image(composite, aoi, output_path, scale=RESOLUTION)
 except RuntimeError as exc:
@@ -86,14 +107,12 @@ print("Step 5: Comparing rasters")
 print("=" * 60)
 
 legacy_root = Path(config["legacy_data_root"])
-
-# Resolve legacy file path based on sensor + AoI + resolution.
+legacy_burned_area_root = Path(config["legacy_burned_area_root"])
 legacy_path = None
 
 if SENSOR == "sentinel2":
     if AOI == "Zambia":
         legacy_path = legacy_root / "Zambia" / f"{RESOLUTION}m_resolution" / f"{LABEL}_NDVI_Zambia.tif"
-    # Other AoIs (Zambia_WL, Zambia_Mponda) have no legacy S2 file — smoke-test mode
 
 elif SENSOR == "modis":
     modis_mponda_aois = {"Zambia", "Zambia_Mponda"}
@@ -104,11 +123,26 @@ elif SENSOR == "modis":
             legacy_path = legacy_root / "Zambia_Mponda" / "500m_resolution" / f"{LABEL}_NDVI_Zambia_Mponda.tif"
         elif RESOLUTION == 1000:
             legacy_path = legacy_root / "Zambia_Mponda" / "MODIS_1000m_resolution" / f"{LABEL}_NDVI_Zambia_Mponda.tif"
-    # Zambia_WL has no MODIS legacy file — smoke-test mode
+
+elif SENSOR == "burned_area":
+    if AOI in {"Zambia", "Zambia_Mponda"}:
+        legacy_path = (
+            legacy_burned_area_root / "Zambia_Mponda" / "500m_resolution"
+            / f"{LABEL}_BurnedArea_Zambia_Mponda.tif"
+        )
+    elif AOI == "Zambia_WL":
+        legacy_path = (
+            legacy_burned_area_root / "Zambia_WL" / "500m_resolution"
+            / f"{LABEL}_BurnedArea_Zambia_WL.tif"
+        )
 
 if legacy_path is not None and legacy_path.exists():
-    stats = compare_rasters(output_path, str(legacy_path))
-    print_comparison(stats)
+    if SENSOR == "burned_area":
+        stats = compare_burned_area(output_path, str(legacy_path))
+        print_burned_area_comparison(stats)
+    else:
+        stats = compare_rasters(output_path, str(legacy_path))
+        print_comparison(stats)
 else:
     if legacy_path is not None:
         print(f"  Legacy file not found at: {legacy_path}")

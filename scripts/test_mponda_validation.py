@@ -114,6 +114,11 @@ legacy_path = None
 if SENSOR == "sentinel2":
     if AOI == "Zambia":
         legacy_path = legacy_root / "Zambia" / f"{RESOLUTION}m_resolution" / f"{LABEL}_NDVI_Zambia.tif"
+    elif AOI == "Zambia_Mponda":
+        if RESOLUTION == 100:
+            legacy_path = legacy_root / "Zambia_Mponda" / "100m_resolution" / f"{LABEL}_NDVI_Zambia_Mponda.tif"
+        elif RESOLUTION == 1000:
+            legacy_path = legacy_root / "Zambia_Mponda" / "Sentinel_1000m_resolution" / f"{LABEL}_NDVI_Zambia_Mponda.tif"
 
 elif SENSOR == "modis":
     modis_mponda_aois = {"Zambia", "Zambia_Mponda"}

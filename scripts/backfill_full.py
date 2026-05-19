@@ -3,7 +3,7 @@ Full historical backfill: generate all monthly composites from sensor start date
 to the latest available GEE data.
 
 Three stages (run sequentially, one at a time recommended):
-  sentinel2    -- 2017-04 to present, 100m + 1000m, Zambia_Mponda + Zambia_WL
+  sentinel2    -- 2019-01 to present, 100m + 1000m, Zambia_Mponda + Zambia_WL
   modis        -- 2000-02 to present, 250m + 500m + 1000m, both AoIs
   burned_area  -- 2000-11 to present, 500m, both AoIs
 
@@ -50,6 +50,19 @@ def _months_between(start_year: int, start_month: int,
             m = 1
             y += 1
     return months
+
+
+def safe_end_date() -> tuple[int, int]:
+    """Return (year, month) of the last complete month.
+
+    Called on 2026-05-19 → returns (2026, 4), meaning April 2026 is the
+    last fully-elapsed month. The current month is never downloaded because
+    it is still accumulating images.
+    """
+    today = datetime.date.today()
+    if today.month == 1:
+        return (today.year - 1, 12)
+    return (today.year, today.month - 1)
 
 
 def _latest_month_for_collection(collection_id: str, aoi: ee.Geometry) -> tuple[int, int]:
@@ -148,15 +161,16 @@ def _try_download(composite, aoi_ee, output_path: str, scale: int, polygon,
 # -- latest end date per sensor ------------------------------------------------
 
 def _get_end_date(stage: str, config: dict, aoi_ee: ee.Geometry) -> tuple[int, int]:
-    if stage == "sentinel2":
-        coll_id = config["sensors"]["sentinel2"]["collection"]
-    elif stage == "modis":
-        coll_id = config["sensors"]["modis"]["resolutions"][250]["collection"]
+    safe = safe_end_date()
+    if stage in ("sentinel2", "modis"):
+        return safe
     elif stage == "burned_area":
-        coll_id = config["sensors"]["burned_area"]["collection"]
+        latest = _latest_month_for_collection(
+            config["sensors"]["burned_area"]["collection"], aoi_ee
+        )
+        return min(safe, latest)
     else:
         raise ValueError(f"Unknown stage: {stage}")
-    return _latest_month_for_collection(coll_id, aoi_ee)
 
 
 # -- stage runner --------------------------------------------------------------

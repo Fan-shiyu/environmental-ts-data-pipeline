@@ -10,7 +10,7 @@ sensors:
   sentinel2:
     collection: COPERNICUS/S2_SR_HARMONIZED
     resolutions: [100, 1000]
-    start_date: '2017-04-01'
+    start_date: '2019-01-01'
   modis:
     resolutions:
       250:

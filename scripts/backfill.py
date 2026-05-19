@@ -7,7 +7,7 @@ from pathlib import Path
 from pipeline.auth import init_gee
 from pipeline.config import load_config
 from pipeline.export import download_image
-from pipeline.sentinel2 import load_aoi, monthly_composite as s2_monthly_composite
+from pipeline.sentinel2 import load_aoi, load_polygon, monthly_composite as s2_monthly_composite
 
 parser = argparse.ArgumentParser(description="Backfill monthly NDVI/BurnedArea composites for a full year.")
 parser.add_argument("--aoi",        required=True, help="AoI key from config (e.g. Zambia)")
@@ -48,7 +48,8 @@ else:
     )
 
 init_gee(config["project"])
-aoi = load_aoi(config["aois"][args.aoi]["path"])
+aoi     = load_aoi(config["aois"][args.aoi]["path"])
+polygon = load_polygon(config["aois"][args.aoi]["path"])
 
 output_root = Path(config["output_root"]) / args.aoi / args.sensor / f"{args.resolution}m"
 output_root.mkdir(parents=True, exist_ok=True)
@@ -81,7 +82,7 @@ for month in range(1, 13):
         else:
             composite = ba_monthly_image(aoi, args.year, month)
 
-        download_image(composite, aoi, str(output_path), scale=args.resolution)
+        download_image(composite, aoi, str(output_path), scale=args.resolution, mask_polygon=polygon)
         print(f"[{label}] downloaded")
         n_downloaded += 1
     except ValueError as exc:

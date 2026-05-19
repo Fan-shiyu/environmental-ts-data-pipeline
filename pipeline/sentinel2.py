@@ -7,6 +7,14 @@ import ee
 import geopandas as gpd
 
 
+def load_polygon(geojson_path: str):
+    """Read a GeoJSON file and return the AoI as a Shapely geometry (EPSG:4326)."""
+    gdf = gpd.read_file(geojson_path)
+    if gdf.crs is None or gdf.crs.to_epsg() != 4326:
+        gdf = gdf.to_crs(epsg=4326)
+    return gdf.geometry.union_all()
+
+
 def load_aoi(geojson_path: str) -> ee.Geometry:
     """Read a GeoJSON file, reproject to EPSG:4326 if needed, return ee.Geometry."""
     from pathlib import Path

@@ -21,7 +21,7 @@ from pathlib import Path
 from pipeline.auth import init_gee
 from pipeline.config import load_config
 from pipeline.export import download_image
-from pipeline.sentinel2 import load_aoi
+from pipeline.sentinel2 import load_aoi, load_polygon
 from pipeline.sentinel2 import monthly_composite as s2_monthly_composite
 from pipeline.validate import (
     compare_burned_area,
@@ -65,7 +65,8 @@ init_gee(config["project"])
 print("=" * 60)
 print("Step 2: Loading AoI")
 print("=" * 60)
-aoi = load_aoi(config["aois"][AOI]["path"])
+aoi     = load_aoi(config["aois"][AOI]["path"])
+polygon = load_polygon(config["aois"][AOI]["path"])
 
 print("=" * 60)
 print(f"Step 3: Building {SENSOR} composite ({LABEL})")
@@ -97,7 +98,7 @@ else:
     output_path = f"test_outputs/test_{LABEL}_NDVI_{AOI}_{RESOLUTION}m_{SENSOR}_v2.tif"
 
 try:
-    download_image(composite, aoi, output_path, scale=RESOLUTION)
+    download_image(composite, aoi, output_path, scale=RESOLUTION, mask_polygon=polygon)
 except RuntimeError as exc:
     print(f"\nWARNING: {exc}")
     sys.exit(1)
@@ -148,7 +149,7 @@ else:
         print(f"  Legacy file not found at: {legacy_path}")
         print("  Switching to smoke-test mode.")
     else:
-        print(f"  No legacy file defined for AoI '{AOI}' + sensor '{SENSOR}' + {RESOLUTION}m — smoke-test mode.")
+        print(f"  No legacy file defined for AoI '{AOI}' + sensor '{SENSOR}' + {RESOLUTION}m -- smoke-test mode.")
     stats = smoke_test(output_path)
     print_smoke_test(stats)
 

@@ -384,7 +384,9 @@ def verify_stage(stage: str, config: dict) -> dict:
                     problems.append(f"MISSING: {path}")
                     continue
 
-                if path.stat().st_size < 1024:
+                # Skip size check for burned area: no-fire months compress to ~558B
+                # (all-zero int raster after polygon mask), which is valid data.
+                if stage != "burned_area" and path.stat().st_size < 1024:
                     n_empty += 1
                     problems.append(f"TINY ({path.stat().st_size}B): {path.name}")
                     continue

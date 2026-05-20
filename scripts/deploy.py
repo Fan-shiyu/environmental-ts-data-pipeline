@@ -74,14 +74,17 @@ def get_deploy_mapping(config: dict) -> list[dict]:
     return mappings
 
 
-def _validate_tif(path: Path) -> bool:
-    """Return True if file is non-empty and openable with rasterio."""
-    if path.stat().st_size == 0:
+def _validate_tif(path: Path, sensor: str) -> bool:
+    """Return True if source file is safe to copy.
+
+    Size check is skipped for burned_area: no-fire months produce all-zero
+    int rasters that compress to ~558B — valid data, not corrupt.
+    """
+    if sensor != "burned_area" and path.stat().st_size <= 1024:
         return False
     try:
-        with rasterio.open(path):
-            pass
-        return True
+        with rasterio.open(path) as ds:
+            return ds.count >= 1
     except Exception:
         return False
 
@@ -89,9 +92,12 @@ def _validate_tif(path: Path) -> bool:
 def deploy_stage(stage: str, aoi: str, config: dict, dry_run: bool = False) -> dict:
     """Copy .tif files from outputs/ into the app's www/data/ folder.
 
-    Returns dict with counts: copied, skipped, failed, failed_paths.
+    Overwrites existing destination files unconditionally. Source files that
+    fail validation are skipped so a bad source never replaces a good dest.
+
+    Returns dict with counts: new, overwrite, skipped, failed, failed_paths.
     """
-    result = {"copied": 0, "skipped": 0, "failed": 0, "failed_paths": []}
+    result = {"new": 0, "overwrite": 0, "skipped": 0, "failed": 0, "failed_paths": []}
     mappings = [
         m for m in get_deploy_mapping(config)
         if m["aoi"] == aoi and (stage == "all" or m["sensor"] == stage)
@@ -100,6 +106,7 @@ def deploy_stage(stage: str, aoi: str, config: dict, dry_run: bool = False) -> d
     for m in mappings:
         source_dir: Path = m["source"]
         dest_dir: Path   = m["dest"]
+        sensor: str      = m["sensor"]
 
         if not source_dir.exists():
             print(f"  [skip] source missing: {source_dir}")
@@ -114,34 +121,37 @@ def deploy_stage(stage: str, aoi: str, config: dict, dry_run: bool = False) -> d
 
         for src in tif_files:
             dst = dest_dir / src.name
+            is_overwrite = dst.exists()
 
-            if dst.exists():
+            if not _validate_tif(src, sensor):
+                print(f"    WARNING: invalid source, skipping: {src.name}")
                 result["skipped"] += 1
-                if dry_run:
-                    print(f"    would skip (exists): {src.name}")
-                continue
-
-            if not _validate_tif(src):
-                print(f"    ERROR: invalid source file: {src.name}")
-                result["failed"] += 1
-                result["failed_paths"].append(str(src))
+                result["failed_paths"].append(f"[invalid source] {src}")
                 continue
 
             if dry_run:
-                print(f"    would copy: {src.name}")
-                result["copied"] += 1
+                label = "would overwrite" if is_overwrite else "would copy (new)"
+                print(f"    {label}: {src.name}")
+                if is_overwrite:
+                    result["overwrite"] += 1
+                else:
+                    result["new"] += 1
                 continue
 
             dest_dir.mkdir(parents=True, exist_ok=True)
             try:
                 shutil.copy2(src, dst)
-                if dst.stat().st_size != src.stat().st_size:
-                    print(f"    ERROR: size mismatch after copy: {src.name}")
-                    dst.unlink(missing_ok=True)
+                dst_size = dst.stat().st_size
+                src_size = src.stat().st_size
+                if abs(dst_size - src_size) > 1024:
+                    print(f"    ERROR: size mismatch after copy: {src.name} ({src_size} -> {dst_size})")
                     result["failed"] += 1
                     result["failed_paths"].append(str(src))
                 else:
-                    result["copied"] += 1
+                    if is_overwrite:
+                        result["overwrite"] += 1
+                    else:
+                        result["new"] += 1
             except Exception as exc:
                 print(f"    ERROR copying {src.name}: {exc}")
                 result["failed"] += 1
@@ -156,31 +166,31 @@ def deploy_all(config: dict, dry_run: bool = False) -> None:
         print(f"ERROR: app data root not found: {APP_DATA_ROOT}")
         sys.exit(1)
 
-    totals = {"copied": 0, "skipped": 0, "failed": 0, "failed_paths": []}
+    totals = {"new": 0, "overwrite": 0, "skipped": 0, "failed": 0, "failed_paths": []}
 
-    print(f"{'Stage':<15} {'AoI':<18} {'Copied':>7} {'Skipped':>8} {'Failed':>7}")
-    print("-" * 60)
+    print(f"{'Stage':<15} {'AoI':<18} {'New':>7} {'Overwrite':>10} {'Skipped':>8} {'Failed':>7}")
+    print("-" * 72)
 
     for stage in ("sentinel2", "modis", "burned_area"):
         for aoi in AOIS:
             r = deploy_stage(stage, aoi, config, dry_run=dry_run)
             mode = "(dry)" if dry_run else ""
             print(
-                f"{stage:<15} {aoi:<18} {r['copied']:>7} {r['skipped']:>8}"
-                f" {r['failed']:>7}  {mode}"
+                f"{stage:<15} {aoi:<18} {r['new']:>7} {r['overwrite']:>10}"
+                f" {r['skipped']:>8} {r['failed']:>7}  {mode}"
             )
-            for k in ("copied", "skipped", "failed"):
+            for k in ("new", "overwrite", "skipped", "failed"):
                 totals[k] += r[k]
             totals["failed_paths"].extend(r["failed_paths"])
 
-    print("-" * 60)
+    print("-" * 72)
     print(
-        f"{'TOTAL':<15} {'':<18} {totals['copied']:>7} {totals['skipped']:>8}"
-        f" {totals['failed']:>7}"
+        f"{'TOTAL':<15} {'':<18} {totals['new']:>7} {totals['overwrite']:>10}"
+        f" {totals['skipped']:>8} {totals['failed']:>7}"
     )
 
     if totals["failed_paths"]:
-        print("\nFailed files:")
+        print("\nSkipped / failed files:")
         for p in totals["failed_paths"]:
             print(f"  {p}")
 
@@ -215,8 +225,8 @@ else:
             r = deploy_stage(stage, aoi, config, dry_run=args.dry_run)
             mode = "(dry)" if args.dry_run else ""
             print(
-                f"\n{stage} / {aoi}: copied={r['copied']} skipped={r['skipped']}"
-                f" failed={r['failed']} {mode}"
+                f"\n{stage} / {aoi}: new={r['new']} overwrite={r['overwrite']}"
+                f" skipped={r['skipped']} failed={r['failed']} {mode}"
             )
             for p in r["failed_paths"]:
-                print(f"  FAILED: {p}")
+                print(f"  SKIPPED/FAILED: {p}")

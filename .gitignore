@@ -28,6 +28,7 @@ service-account-key*.json
 
 # Data outputs
 data/
+outputs/
 test_outputs/
 *.tif
 *.tiff

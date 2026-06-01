@@ -66,6 +66,20 @@ def safe_end_date() -> tuple[int, int]:
     return (today.year, today.month - 1)
 
 
+def _parse_ym_arg(value: str, label: str) -> tuple[int, int]:
+    """Parse a YYYY-MM CLI argument into (year, month). Exit 1 on bad format."""
+    import re
+    m = re.fullmatch(r"(\d{4})-(\d{2})", value)
+    if not m:
+        print(f"ERROR: {label} must be in YYYY-MM format, got '{value}'")
+        sys.exit(1)
+    year, month = int(m.group(1)), int(m.group(2))
+    if not (1 <= month <= 12):
+        print(f"ERROR: {label} month must be 01-12, got '{value}'")
+        sys.exit(1)
+    return year, month
+
+
 def _latest_month_for_collection(collection_id: str, aoi: ee.Geometry) -> tuple[int, int]:
     """Query GEE for the most recent image month in a collection."""
     img = (
@@ -176,7 +190,13 @@ def _get_end_date(stage: str, config: dict, aoi_ee: ee.Geometry) -> tuple[int, i
 
 # -- stage runner --------------------------------------------------------------
 
-def run_stage(stage: str, config: dict, dry_run: bool = False) -> None:
+def run_stage(
+    stage: str,
+    config: dict,
+    dry_run: bool = False,
+    start_override: tuple[int, int] | None = None,
+    end_override: tuple[int, int] | None = None,
+) -> None:
     output_root = Path(config["output_root"])
     done_log    = _load_log()
 
@@ -192,14 +212,22 @@ def run_stage(stage: str, config: dict, dry_run: bool = False) -> None:
     else:
         raise ValueError(f"Unknown stage: {stage}")
 
-    start_dt = datetime.date.fromisoformat(start_str)
-    start_year, start_month = start_dt.year, start_dt.month
+    # --start-date overrides the configured sensor start; else existing behaviour.
+    if start_override is not None:
+        start_year, start_month = start_override
+    else:
+        start_dt = datetime.date.fromisoformat(start_str)
+        start_year, start_month = start_dt.year, start_dt.month
 
     for aoi_name in AOIS:
         aoi_ee  = load_aoi(config["aois"][aoi_name]["path"])
         polygon = load_polygon(config["aois"][aoi_name]["path"])
 
-        end_year, end_month = _get_end_date(stage, config, aoi_ee)
+        # --end-date overrides safe_end_date()/GEE-latest; else existing behaviour.
+        if end_override is not None:
+            end_year, end_month = end_override
+        else:
+            end_year, end_month = _get_end_date(stage, config, aoi_ee)
         all_months = _months_between(start_year, start_month, end_year, end_month)
 
         for res in resolutions:
@@ -319,7 +347,12 @@ def run_stage(stage: str, config: dict, dry_run: bool = False) -> None:
 
 # -- verification --------------------------------------------------------------
 
-def verify_stage(stage: str, config: dict) -> dict:
+def verify_stage(
+    stage: str,
+    config: dict,
+    start_override: tuple[int, int] | None = None,
+    end_override: tuple[int, int] | None = None,
+) -> dict:
     """Verify all expected output files for a completed stage."""
     output_root = Path(config["output_root"])
 
@@ -344,8 +377,11 @@ def verify_stage(stage: str, config: dict) -> dict:
     else:
         raise ValueError(f"Unknown stage: {stage}")
 
-    start_dt = datetime.date.fromisoformat(start_str)
-    start_year, start_month = start_dt.year, start_dt.month
+    if start_override is not None:
+        start_year, start_month = start_override
+    else:
+        start_dt = datetime.date.fromisoformat(start_str)
+        start_year, start_month = start_dt.year, start_dt.month
 
     problems = []
     n_checked = 0
@@ -364,7 +400,10 @@ def verify_stage(stage: str, config: dict) -> dict:
 
     for aoi_name in AOIS:
         aoi_ee  = load_aoi(config["aois"][aoi_name]["path"])
-        end_year, end_month = _get_end_date(stage, config, aoi_ee)
+        if end_override is not None:
+            end_year, end_month = end_override
+        else:
+            end_year, end_month = _get_end_date(stage, config, aoi_ee)
         all_months = _months_between(start_year, start_month, end_year, end_month)
 
         for res in resolutions:
@@ -493,7 +532,18 @@ parser.add_argument(
 )
 parser.add_argument("--dry-run", action="store_true",
                     help="Print what would be generated without downloading")
+parser.add_argument("--start-date", default=None, metavar="YYYY-MM",
+                    help="Override the sensor's default start date (inclusive)")
+parser.add_argument("--end-date", default=None, metavar="YYYY-MM",
+                    help="Override the safe_end_date() limit (inclusive)")
 args = parser.parse_args()
+
+# Optional bounded date range. When omitted, behaviour is unchanged.
+start_override = _parse_ym_arg(args.start_date, "--start-date") if args.start_date else None
+end_override   = _parse_ym_arg(args.end_date,   "--end-date")   if args.end_date   else None
+if start_override is not None and end_override is not None and start_override > end_override:
+    print(f"ERROR: --start-date ({args.start_date}) must be <= --end-date ({args.end_date})")
+    sys.exit(1)
 
 config = load_config()
 
@@ -509,10 +559,12 @@ for i, stage in enumerate(stages_to_run, 1):
     print(f"Stage {i}/{n_stages}: {stage}  {'(DRY RUN)' if args.dry_run else ''}")
     print("=" * 60)
 
-    run_stage(stage, config, dry_run=args.dry_run)
+    run_stage(stage, config, dry_run=args.dry_run,
+              start_override=start_override, end_override=end_override)
 
     if not args.dry_run:
-        result = verify_stage(stage, config)
+        result = verify_stage(stage, config,
+                              start_override=start_override, end_override=end_override)
 
         if result["n_problems"] > 0 and stage != stages_to_run[-1]:
             ans = input(f"\nContinue to next stage? [y/n]: ").strip().lower()

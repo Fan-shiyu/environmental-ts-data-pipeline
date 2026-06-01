@@ -26,6 +26,9 @@ jobs:
   update:
     runs-on: ubuntu-latest
     timeout-minutes: 120     # 2-hour hard limit
+    permissions:
+      issues: write
+      contents: read
 
     steps:
       - name: Checkout repository
@@ -40,7 +43,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -e ".[dev]"
 
       - name: Run monthly update
         env:

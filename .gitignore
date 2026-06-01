@@ -30,6 +30,9 @@ service-account-key*.json
 data/
 outputs/*
 !outputs/update_log.csv
+!outputs/processed
+outputs/processed/*
+!outputs/processed/verification_snapshot.json
 test_outputs/
 *.tif
 *.tiff

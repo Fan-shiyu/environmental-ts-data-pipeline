@@ -1,8 +1,7 @@
 name: Manual backfill (test / recovery)
 
-# backfill_full.py supports only --stage and --dry-run. It backfills each
-# sensor's FULL configured range (config start_date -> latest available month);
-# it has no date-window arguments, so start-date/end-date inputs were removed.
+# Manual-only workflow to fetch a bounded date range via scripts/backfill_full.py
+# (which supports --stage, --dry-run, --start-date, --end-date).
 
 on:
   workflow_dispatch:
@@ -12,6 +11,12 @@ on:
         type: choice
         options: [sentinel2, modis, burned_area, all]
         default: sentinel2
+      start_date:
+        description: 'Start date (YYYY-MM, inclusive)'
+        default: '2026-04'
+      end_date:
+        description: 'End date (YYYY-MM, inclusive)'
+        default: '2026-05'
       dry_run:
         description: 'Dry run only'
         type: boolean
@@ -43,6 +48,8 @@ jobs:
           GEE_SERVICE_ACCOUNT_KEY: ${{ secrets.GEE_SERVICE_ACCOUNT_KEY }}
         run: |
           ARGS="--stage ${{ inputs.stage }}"
+          ARGS="$ARGS --start-date ${{ inputs.start_date }}"
+          ARGS="$ARGS --end-date ${{ inputs.end_date }}"
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             ARGS="$ARGS --dry-run"
           fi

@@ -1,0 +1,11 @@
+earthengine-api
+geopandas
+rasterio
+numpy
+pandas
+pyarrow>=14.0
+pyyaml
+pymannkendall>=1.4
+requests
+scipy
+python-dotenv

@@ -20,6 +20,7 @@ Usage:
 import argparse
 import csv
 import datetime
+import os
 import subprocess
 import sys
 import time
@@ -294,10 +295,11 @@ def main() -> None:
     if args.dry_run:
         print("DRY RUN -- no GEE calls, no subprocesses, no file writes\n")
 
-    # GEE init — always, matching backfill_full.py pattern (skip in dry-run)
+    # GEE init — always, matching backfill_full.py pattern (skip in dry-run).
+    # GEE_SERVICE_ACCOUNT_KEY set in CI -> service account; unset locally -> interactive.
     if not args.dry_run:
         from pipeline.auth import init_gee
-        init_gee(config["project"])
+        init_gee(config["project"], os.environ.get("GEE_SERVICE_ACCOUNT_KEY"))
 
     try:
         # ------------------------------------------------------------------

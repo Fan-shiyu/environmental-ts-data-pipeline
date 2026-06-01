@@ -18,6 +18,7 @@ Run with:
 import argparse
 import csv
 import datetime
+import os
 import sys
 import time
 from pathlib import Path
@@ -498,10 +499,8 @@ config = load_config()
 
 stages_to_run = STAGES if args.stage == "all" else [args.stage]
 
-if not args.dry_run:
-    init_gee(config["project"])
-else:
-    init_gee(config["project"])
+# GEE_SERVICE_ACCOUNT_KEY set in CI -> service account; unset locally -> interactive.
+init_gee(config["project"], os.environ.get("GEE_SERVICE_ACCOUNT_KEY"))
 
 n_stages = len(stages_to_run)
 

@@ -1,0 +1,3 @@
+run_timestamp,new_months_fetched,pass_a_ran,pass_b_ran,new_year_detected,deploy_ran,status,error_message
+2026-06-01T12:27:29,0,False,False,2025,False,error,Pass A failed (exit code 1)
+2026-06-01T12:38:03,0,True,True,2025,False,success,

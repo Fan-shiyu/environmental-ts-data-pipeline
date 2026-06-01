@@ -1,36 +1,31 @@
-# Site configuration for the environmental-ts-data-pipeline
-# Defines areas of interest (AoI), sensors, and processing parameters.
-#
-# Template — fill in real values before running the pipeline.
-#
-# sites:
-#   - name: Mponda
-#     country: Zambia
-#     gee_asset: projects/ee-sensingclues-timeseries/assets/AoI_Mponda
-#     crs: EPSG:4326
-#     sensors:
-#       - name: sentinel2
-#         resolution: 10          # metres
-#         collection: COPERNICUS/S2_SR_HARMONIZED
-#         filter_cloud_pct: 100   # pre-filter: drop scenes with >= this % cloud cover
-#       - name: modis
-#         resolution: 500
-#         collection: MODIS/006/MOD13A1
-#     output_folder: GEE_Mponda_10m_resolution
-#
-#   - name: WL
-#     country: Zambia
-#     gee_asset: projects/ee-sensingclues-timeseries/assets/AoI_WL
-#     crs: EPSG:4326
-#     sensors:
-#       - name: sentinel2
-#         resolution: 10
-#         collection: COPERNICUS/S2_SR_HARMONIZED
-#         filter_cloud_pct: 100
-#     output_folder: GEE_WL_10m_resolution
-#
-# date_range:
-#   start_year: 2020
-#   start_month: 1
-#   end_year: null    # null = run to present
-#   end_month: null
+project: sensingclues-ndvi
+
+aois:
+  Zambia_Mponda:
+    path: C:\Users\20244650\Documents\GitHub\environmental-time-series\app\www\data\AoI\AoI_Zambia_By_Life_Connected.geojson
+  Zambia_WL:
+    path: C:\Users\20244650\Documents\GitHub\environmental-time-series\app\www\data\AoI\AoI_Zambia_WL.geojson
+
+sensors:
+  sentinel2:
+    collection: COPERNICUS/S2_SR_HARMONIZED
+    resolutions: [100, 1000]
+    start_date: '2019-01-01'
+  modis:
+    resolutions:
+      250:
+        collection: MODIS/061/MOD13Q1
+      500:
+        collection: MODIS/061/MOD13A1
+      1000:
+        collection: MODIS/061/MOD13A2
+    start_date: '2000-02-01'
+  burned_area:
+    collection: MODIS/061/MCD64A1
+    band: BurnDate
+    resolutions: [500]
+    start_date: '2000-11-01'
+
+output_root: outputs
+legacy_data_root: C:\Users\20244650\Documents\GitHub\environmental-time-series\app\www\data\NDVI
+legacy_burned_area_root: C:\Users\20244650\Documents\GitHub\environmental-time-series\app\www\data\BurnedArea

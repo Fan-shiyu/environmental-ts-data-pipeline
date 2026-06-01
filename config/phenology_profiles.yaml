@@ -1,0 +1,20 @@
+profiles:
+  Zambia:
+    Crops:
+      green_up_window: [11, 12]
+      green_up_baseline_month: 10
+      green_up_threshold: 0.08
+      green_up_conf_lo_min: 0.03
+      peak_window: [1, 3]
+      peak_conf_delta: 0.05
+      senescence_window: [4, 6]
+      senescence_threshold: 0.30
+    Rangeland:
+      green_up_window: [10, 12]
+      green_up_baseline_month: 9
+      green_up_threshold: 0.05
+      green_up_conf_lo_min: 0.02
+      peak_window: [1, 3]
+      peak_conf_delta: 0.04
+      senescence_window: [4, 7]
+      senescence_threshold: 0.20

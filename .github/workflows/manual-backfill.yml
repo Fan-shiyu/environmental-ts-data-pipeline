@@ -1,0 +1,62 @@
+name: Manual backfill (test / recovery)
+
+# backfill_full.py supports only --stage and --dry-run. It backfills each
+# sensor's FULL configured range (config start_date -> latest available month);
+# it has no date-window arguments, so start-date/end-date inputs were removed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'Which stage to backfill'
+        type: choice
+        options: [sentinel2, modis, burned_area, all]
+        default: sentinel2
+      dry_run:
+        description: 'Dry run only'
+        type: boolean
+        default: true
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run backfill
+        env:
+          GEE_SERVICE_ACCOUNT_KEY: ${{ secrets.GEE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          ARGS="--stage ${{ inputs.stage }}"
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          export PYTHONPATH=$GITHUB_WORKSPACE
+          python -u scripts/backfill_full.py $ARGS
+
+      - name: Upload outputs as artifacts
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backfill-${{ github.run_number }}
+          path: |
+            outputs/Zambia_Mponda/sentinel2/100m/*.tif
+            outputs/Zambia_WL/sentinel2/100m/*.tif
+            outputs/backfill_log.csv
+          retention-days: 7
+          if-no-files-found: warn

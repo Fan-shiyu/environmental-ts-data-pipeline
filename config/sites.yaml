@@ -2,9 +2,9 @@ project: sensingclues-ndvi
 
 aois:
   Zambia_Mponda:
-    path: C:\Users\20244650\Documents\GitHub\environmental-time-series\app\www\data\AoI\AoI_Zambia_By_Life_Connected.geojson
+    path: config/aoi/AoI_Zambia_Mponda.geojson
   Zambia_WL:
-    path: C:\Users\20244650\Documents\GitHub\environmental-time-series\app\www\data\AoI\AoI_Zambia_WL.geojson
+    path: config/aoi/AoI_Zambia_WL.geojson
 
 sensors:
   sentinel2:

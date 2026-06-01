@@ -26,10 +26,16 @@ env/
 gee-key*.json
 service-account-key*.json
 
+# Temporary credential test script (run with a path to a real key file)
+scripts/test_service_account.py
+
 # Data outputs
 data/
 outputs/*
 !outputs/update_log.csv
+!outputs/processed
+outputs/processed/*
+!outputs/processed/verification_snapshot.json
 test_outputs/
 *.tif
 *.tiff

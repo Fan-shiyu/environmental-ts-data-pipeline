@@ -20,6 +20,7 @@ Usage:
 import argparse
 import csv
 import datetime
+import os
 import subprocess
 import sys
 import time
@@ -294,10 +295,11 @@ def main() -> None:
     if args.dry_run:
         print("DRY RUN -- no GEE calls, no subprocesses, no file writes\n")
 
-    # GEE init — always, matching backfill_full.py pattern (skip in dry-run)
+    # GEE init — always, matching backfill_full.py pattern (skip in dry-run).
+    # GEE_SERVICE_ACCOUNT_KEY set in CI -> service account; unset locally -> interactive.
     if not args.dry_run:
         from pipeline.auth import init_gee
-        init_gee(config["project"])
+        init_gee(config["project"], os.environ.get("GEE_SERVICE_ACCOUNT_KEY"))
 
     try:
         # ------------------------------------------------------------------
@@ -377,11 +379,25 @@ def main() -> None:
             aoi_ees = {a: _load_aoi(config["aois"][a]["path"]) for a in aois}
             polygons = {a: _load_polygon(config["aois"][a]["path"]) for a in aois}
 
+            fetched_files: list[dict] = []
             for (aoi, sensor, res), months in gaps.items():
                 for y, m in months:
                     ok, _ = fetch_month(aoi, sensor, res, y, m, config, aoi_ees[aoi], polygons[aoi])
                     if ok:
                         n_fetched += 1
+                        filename = (
+                            f"{y}-{m:02d}_BurnedArea_{aoi}.tif"
+                            if sensor == "burned_area"
+                            else f"{y}-{m:02d}_NDVI_{aoi}.tif"
+                        )
+                        fp = Path(outputs_root) / aoi / sensor / f"{res}m" / filename
+                        if fp.exists():
+                            fetched_files.append({
+                                "path": str(fp),
+                                "aoi": aoi, "sensor": sensor, "resolution": res,
+                                "year": y, "month": m,
+                                "data_type": "burned_area" if sensor == "burned_area" else "ndvi",
+                            })
                     else:
                         n_failed += 1
 
@@ -389,6 +405,27 @@ def main() -> None:
             if n_failed > 0:
                 if not state["error"]:
                     state["error"] = f"{n_failed} GEE fetch(es) failed"
+
+            # ------------------------------------------------------------------
+            # [3b/7] Verify downloaded rasters (before wasting compute on bad data)
+            # ------------------------------------------------------------------
+            if fetched_files:
+                print("\n[3b/7] Verifying downloaded rasters...", flush=True)
+                from preprocess.verify_outputs import verify_rasters
+                raster_result = verify_rasters(new_files=fetched_files, config=config)
+                print(raster_result.summary, flush=True)
+                if not raster_result.passed:
+                    failed_paths = {path for path, _, _ in raster_result.failures}
+                    n_excluded = len([f for f in fetched_files if f["path"] in failed_paths])
+                    fetched_files = [f for f in fetched_files if f["path"] not in failed_paths]
+                    print(f"  {n_excluded} file(s) failed verification -- "
+                          f"excluded from preprocessing", flush=True)
+
+        # Build list of new (aoi, sensor, res, year, month) tuples for Parquet check
+        new_months_for_verify: list[tuple] = [
+            (f["aoi"], f["sensor"], f["resolution"], f["year"], f["month"])
+            for f in (fetched_files if not args.skip_fetch and not args.dry_run else [])
+        ]
 
         state["new_months"] = n_fetched
 
@@ -448,10 +485,32 @@ def main() -> None:
             print("  Skipping Pass B")
 
         # ------------------------------------------------------------------
+        # [5b/7] Verify preprocessed Parquet outputs (before deploy)
+        # ------------------------------------------------------------------
+        verify_passed = True
+        if state["pass_a_ran"] or args.dry_run:
+            print("\n[5b/7] Verifying preprocessed outputs...", flush=True)
+            from preprocess.verify_outputs import verify_parquet_outputs
+            parquet_result = verify_parquet_outputs(
+                outputs_root=outputs_root,
+                new_months=new_months_for_verify,
+                config=config,
+            )
+            print(parquet_result.summary, flush=True)
+            if not parquet_result.passed:
+                verify_passed = False
+                print("  Parquet verification FAILED -- aborting deploy", flush=True)
+                if not state["error"]:
+                    state["error"] = (
+                        f"Parquet verification failed: "
+                        f"{len(parquet_result.failures)} check(s) failed"
+                    )
+
+        # ------------------------------------------------------------------
         # [6/7] Deploy
         # ------------------------------------------------------------------
         print("\n[6/7] Deploying to app...", flush=True)
-        pass_a_ok_for_deploy = state["pass_a_ran"] or args.dry_run
+        pass_a_ok_for_deploy = (state["pass_a_ran"] or args.dry_run) and verify_passed
         if args.skip_deploy:
             print("  Skipped (--skip-deploy)")
         elif not pass_a_ok_for_deploy:

@@ -18,6 +18,8 @@ dependencies = [
     "requests",
     "pymannkendall>=1.4",
     "pyarrow>=14.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -27,7 +29,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["pipeline", "preprocess"]
+packages = ["pipeline", "preprocess", "api"]
 
 [tool.ruff]
 line-length = 100

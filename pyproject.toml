@@ -20,6 +20,8 @@ dependencies = [
     "pyarrow>=14.0",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
+    "litellm>=1.30",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -29,7 +31,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["pipeline", "preprocess", "api"]
+packages = ["pipeline", "preprocess", "api", "agent"]
 
 [tool.ruff]
 line-length = 100

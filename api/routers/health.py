@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from api.cache import response_cache
 from api.dependencies import (
     AOIS,
     SENSOR_RESOLUTIONS,
@@ -29,6 +30,7 @@ def health() -> dict:
         "next_scheduled_run": next_scheduled_run(),
         "parquet_files_present": count_parquet_files(),
         "api_version": API_VERSION,
+        "cache": response_cache.stats(),
     }
 
 

@@ -1,7 +1,10 @@
 """Geometry endpoints: AoI polygon, land cover polygons, fire return period.
 
 These return GeoJSON (FeatureCollection), not the APIResponse envelope, so the
-Shiny app / agent can render them directly on a map.
+Shiny app / agent can render them directly on a map. Responses are cached
+(24 h) since geometry changes at most annually. The `simplified` parameter
+(landcover + FRP only) Douglas-Peucker-simplifies at 50 m in metric space to
+shrink the large raw pixel-boundary payloads.
 """
 
 import json
@@ -10,7 +13,8 @@ import geopandas as gpd
 from fastapi import APIRouter, HTTPException
 from pyproj import Geod
 
-from api.dependencies import REPO_ROOT
+from api.cache import response_cache
+from api.dependencies import REPO_ROOT, TTL_GEOMETRY, load_geojson_4326
 
 router = APIRouter(prefix="/geometry", tags=["geometry"])
 
@@ -41,6 +45,11 @@ def _aoi_total_area_km2(aoi: str) -> float | None:
 
 @router.get("/aoi")
 def geometry_aoi(aoi: str) -> dict:
+    cache_key = response_cache.make_key("/geometry/aoi", {"aoi": aoi})
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     path = _aoi_geojson_path(aoi)
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"AoI geometry not found for {aoi}")
@@ -50,11 +59,25 @@ def geometry_aoi(aoi: str) -> dict:
     fc = json.loads(gdf.to_json())
     fc["area_km2"] = round(float(gdf["area_km2"].sum()), 4)
     fc["aoi"] = aoi
+
+    response_cache.set(cache_key, fc, ttl_seconds=TTL_GEOMETRY)
     return fc
 
 
 @router.get("/landcover")
-def geometry_landcover(aoi: str, land_cover_class: str | None = None) -> dict:
+def geometry_landcover(
+    aoi: str,
+    land_cover_class: str | None = None,
+    simplified: bool = True,
+) -> dict:
+    cache_key = response_cache.make_key(
+        "/geometry/landcover",
+        {"aoi": aoi, "land_cover_class": land_cover_class, "simplified": simplified},
+    )
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     lc_dir = REPO_ROOT / "config" / "landcover" / aoi
     if not lc_dir.exists():
         raise HTTPException(status_code=404, detail=f"No land cover geometry for {aoi}")
@@ -69,7 +92,7 @@ def geometry_landcover(aoi: str, land_cover_class: str | None = None) -> dict:
             if land_cover_class:  # explicit class requested but missing
                 raise HTTPException(status_code=404, detail=f"No '{cls}' geometry for {aoi}")
             continue
-        gdf = gpd.read_file(path).to_crs("EPSG:4326")
+        gdf = load_geojson_4326(str(path), simplified=simplified)
         for geom in gdf.geometry:
             area_km2 = _geod_area_km2(geom)
             features.append({
@@ -85,14 +108,38 @@ def geometry_landcover(aoi: str, land_cover_class: str | None = None) -> dict:
     if not features:
         raise HTTPException(status_code=404, detail=f"No land cover geometry for {aoi}")
 
-    return {"type": "FeatureCollection", "aoi": aoi, "features": features}
+    fc = {"type": "FeatureCollection", "aoi": aoi, "simplified": simplified, "features": features}
+    response_cache.set(cache_key, fc, ttl_seconds=TTL_GEOMETRY)
+    return fc
 
 
 @router.get("/fire-return-period")
-def geometry_fire_return_period(aoi: str, resolution: int = 500) -> dict:
+def geometry_fire_return_period(
+    aoi: str,
+    resolution: int = 500,
+    simplified: bool = False,  # FRP polygons are fragmented 500m cells; 50m
+                               # simplification gives no size benefit, so default off.
+) -> dict:
+    cache_key = response_cache.make_key(
+        "/geometry/fire-return-period",
+        {"aoi": aoi, "resolution": resolution, "simplified": simplified},
+    )
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     path = (REPO_ROOT / "outputs" / "processed" / aoi / "burned_area"
             / f"{resolution}m" / "fire_return_period.geojson")
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"No fire return period data for {aoi}")
-    with open(path) as f:
-        return json.load(f)
+
+    if simplified:
+        # FRP is EPSG:4326 -> helper reprojects to metres, simplifies 50 m, back to 4326.
+        gdf = load_geojson_4326(str(path), simplified=True)
+        fc = json.loads(gdf.to_json())
+    else:
+        with open(path) as f:
+            fc = json.load(f)
+
+    response_cache.set(cache_key, fc, ttl_seconds=TTL_GEOMETRY)
+    return fc

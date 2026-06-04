@@ -2,7 +2,9 @@
 
 from fastapi import APIRouter, Query
 
+from api.cache import response_cache
 from api.dependencies import (
+    TTL_DATA,
     df_to_records,
     get_parquet_path,
     read_parquet_safe,
@@ -32,11 +34,18 @@ def burned_area_summary(
     end: str | None = None,
     format: str = Query("table", pattern="^(table|agent)$"),
 ) -> APIResponse:
-    df = read_parquet_safe(get_parquet_path(aoi, "burned_area", _RES, "ba_monthly"))
-    if df is None or df.empty:
-        return _error(aoi, f"No burned area data for {aoi}")
+    cache_key = response_cache.make_key(
+        "/burned-area/summary", {"aoi": aoi, "start": start, "end": end},
+    )
+    cached = response_cache.get(cache_key)
+    if cached is None:
+        df_raw = read_parquet_safe(get_parquet_path(aoi, "burned_area", _RES, "ba_monthly"))
+        if df_raw is None or df_raw.empty:
+            return _error(aoi, f"No burned area data for {aoi}")
+        cached = {"df": df_raw}
+        response_cache.set(cache_key, cached, ttl_seconds=TTL_DATA)
 
-    df = ym_filter(df, start, end).sort_values(["year", "month"])
+    df = ym_filter(cached["df"], start, end).sort_values(["year", "month"])
     dt = _max_ym(df)
     meta = {"aoi": aoi, "resolution": _RES, "data_through": dt, "n_records": len(df)}
 
@@ -61,11 +70,16 @@ def burned_area_daily(
     year: int,
     format: str = Query("table", pattern="^(table|agent)$"),
 ) -> APIResponse:
-    df = read_parquet_safe(get_parquet_path(aoi, "burned_area", _RES, "ba_daily"))
-    if df is None or df.empty:
-        return _error(aoi, f"No daily burned area data for {aoi}")
+    cache_key = response_cache.make_key("/burned-area/daily", {"aoi": aoi})
+    cached = response_cache.get(cache_key)
+    if cached is None:
+        df_raw = read_parquet_safe(get_parquet_path(aoi, "burned_area", _RES, "ba_daily"))
+        if df_raw is None or df_raw.empty:
+            return _error(aoi, f"No daily burned area data for {aoi}")
+        cached = {"df": df_raw}
+        response_cache.set(cache_key, cached, ttl_seconds=TTL_DATA)
 
-    df = df[df["year"] == year].sort_values("date")
+    df = cached["df"][cached["df"]["year"] == year].sort_values("date")
     if df.empty:
         return _error(aoi, f"No daily burned area for {aoi} in {year}")
 

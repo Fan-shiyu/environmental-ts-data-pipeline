@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
+from api.cache import response_cache
 from api.routers import burned_area, geometry, health, ndvi
 
 app = FastAPI(
@@ -33,6 +34,13 @@ app.include_router(health.router, prefix=_PREFIX)
 app.include_router(ndvi.router, prefix=_PREFIX)
 app.include_router(burned_area.router, prefix=_PREFIX)
 app.include_router(geometry.router, prefix=_PREFIX)
+
+
+@app.post("/cache/clear", tags=["cache"])
+def clear_cache():
+    """Clear all cache entries. Called after the pipeline deploys new data."""
+    response_cache.clear()
+    return {"status": "ok", "message": "Cache cleared"}
 
 
 @app.get("/", include_in_schema=False)

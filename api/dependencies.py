@@ -10,6 +10,7 @@ import math
 import time
 from pathlib import Path
 
+import geopandas as gpd
 import numpy as np
 import pandas as pd
 
@@ -18,6 +19,13 @@ from pipeline.config import load_config
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROCESSED_ROOT = REPO_ROOT / "outputs" / "processed"
 UPDATE_LOG_PATH = REPO_ROOT / "outputs" / "update_log.csv"
+
+# Cache TTLs (seconds)
+TTL_DATA = 3600       # ndvi/* + burned-area/* — stable until next monthly run
+TTL_GEOMETRY = 86400  # geometry/* — changes at most annually
+
+# Metric CRS used for distance-based geometry simplification (UTM zone 35S).
+SIMPLIFY_CRS = "EPSG:32735"
 
 AOIS = ["Zambia_Mponda", "Zambia_WL"]
 
@@ -222,3 +230,24 @@ def df_to_records(df: pd.DataFrame, columns: list[str] | None = None) -> list[di
         df = df[keep]
     return [{k: _clean_value(v) for k, v in row.items()}
             for row in df.to_dict(orient="records")]
+
+
+# ---------------------------------------------------------------------------
+# Geometry loading + optional simplification
+# ---------------------------------------------------------------------------
+
+def load_geojson_4326(path, simplified: bool = True, tolerance_m: int = 50):
+    """Read a GeoJSON and return it in EPSG:4326.
+
+    When simplified, run Douglas-Peucker at `tolerance_m` metres in a metric CRS
+    BEFORE reprojecting (a degree tolerance is meaningless for these layers).
+    Land cover files are already EPSG:32735 (metres); FRP is EPSG:4326 and is
+    reprojected to metres for simplification, then back.
+    """
+    gdf = gpd.read_file(path)
+    if simplified:
+        metric = gdf.to_crs(SIMPLIFY_CRS) if (gdf.crs and gdf.crs.is_geographic) else gdf
+        metric = metric.copy()
+        metric["geometry"] = metric.geometry.simplify(tolerance_m, preserve_topology=True)
+        gdf = metric
+    return gdf.to_crs("EPSG:4326")

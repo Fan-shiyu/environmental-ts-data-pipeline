@@ -2,7 +2,9 @@
 
 from fastapi import APIRouter, Query
 
+from api.cache import response_cache
 from api.dependencies import (
+    TTL_DATA,
     df_to_records,
     get_parquet_path,
     read_parquet_safe,
@@ -49,13 +51,26 @@ def ndvi_timeseries(
 ) -> APIResponse:
     res = resolve_resolution(sensor, resolution, start, end)
 
-    monthly = read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_monthly"))
-    if monthly is None or monthly.empty:
-        return _error(aoi, sensor, res, f"ndvi_monthly not available for {aoi}/{sensor}/{res}m")
+    # Cache the raw tables (format-agnostic); apply filter/format after.
+    cache_key = response_cache.make_key(
+        "/ndvi/timeseries",
+        {"aoi": aoi, "sensor": sensor, "resolution": res, "start": start, "end": end},
+    )
+    cached = response_cache.get(cache_key)
+    if cached is None:
+        monthly_raw = read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_monthly"))
+        if monthly_raw is None or monthly_raw.empty:
+            return _error(aoi, sensor, res, f"ndvi_monthly not available for {aoi}/{sensor}/{res}m")
+        cached = {
+            "monthly": monthly_raw,
+            "baselines": read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_monthly_baselines")),
+            "trend": read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_trend_stats")),
+        }
+        response_cache.set(cache_key, cached, ttl_seconds=TTL_DATA)
 
-    monthly = ym_filter(monthly, start, end).sort_values(["year", "month"])
-    baselines = read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_monthly_baselines"))
-    trend = read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_trend_stats"))
+    monthly = ym_filter(cached["monthly"], start, end).sort_values(["year", "month"])
+    baselines = cached["baselines"]
+    trend = cached["trend"]
 
     # Join per-calendar-month baseline columns onto each monthly row.
     if baselines is not None and not baselines.empty:
@@ -125,15 +140,26 @@ def ndvi_by_landcover(
 ) -> APIResponse:
     res = resolve_resolution(sensor, resolution, None, None)
 
-    monthly = read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_monthly_by_class"))
-    if monthly is None or monthly.empty:
-        return _error(aoi, sensor, res, f"No land cover data for {aoi}")
+    cache_key = response_cache.make_key(
+        "/ndvi/by-landcover",
+        {"aoi": aoi, "sensor": sensor, "resolution": res, "year": year},
+    )
+    cached = response_cache.get(cache_key)
+    if cached is None:
+        monthly_raw = read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_monthly_by_class"))
+        if monthly_raw is None or monthly_raw.empty:
+            return _error(aoi, sensor, res, f"No land cover data for {aoi}")
+        cached = {
+            "monthly": monthly_raw,
+            "annual": read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_annual_by_class")),
+        }
+        response_cache.set(cache_key, cached, ttl_seconds=TTL_DATA)
 
-    monthly = monthly[monthly["year"] == year].sort_values(["land_cover", "month"])
+    monthly = cached["monthly"][cached["monthly"]["year"] == year].sort_values(["land_cover", "month"])
     if monthly.empty:
         return _error(aoi, sensor, res, f"No by-landcover data for {aoi} in {year}")
 
-    annual = read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_annual_by_class"))
+    annual = cached["annual"]
 
     if format == "table":
         cols = ["year", "month", "land_cover", "mean_ndvi", "n_valid_px"]
@@ -168,15 +194,26 @@ def ndvi_anomaly(
 ) -> APIResponse:
     res = resolve_resolution(sensor, resolution, None, None)
 
-    monthly = read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_anomaly_monthly"))
-    if monthly is None or monthly.empty:
-        return _error(aoi, sensor, res, f"No anomaly data for {aoi}")
+    cache_key = response_cache.make_key(
+        "/ndvi/anomaly",
+        {"aoi": aoi, "sensor": sensor, "resolution": res, "year": year},
+    )
+    cached = response_cache.get(cache_key)
+    if cached is None:
+        monthly_raw = read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_anomaly_monthly"))
+        if monthly_raw is None or monthly_raw.empty:
+            return _error(aoi, sensor, res, f"No anomaly data for {aoi}")
+        cached = {
+            "monthly": monthly_raw,
+            "resilience": read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_anomaly_resilience")),
+        }
+        response_cache.set(cache_key, cached, ttl_seconds=TTL_DATA)
 
-    monthly = monthly[monthly["year"] == year].sort_values(["land_cover", "month"])
+    monthly = cached["monthly"][cached["monthly"]["year"] == year].sort_values(["land_cover", "month"])
     if monthly.empty:
         return _error(aoi, sensor, res, f"No anomaly data for {aoi} in {year}")
 
-    resilience = read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_anomaly_resilience"))
+    resilience = cached["resilience"]
     resilience_records = []
     if resilience is not None and not resilience.empty:
         ry = resilience[resilience["anomaly_year"] == year]
@@ -213,10 +250,18 @@ def ndvi_phenology(
 ) -> APIResponse:
     res = resolve_resolution(sensor, resolution, None, None)
 
-    pheno = read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_phenology"))
-    if pheno is None or pheno.empty:
-        return _error(aoi, sensor, res, f"No phenology data for {aoi}")
+    cache_key = response_cache.make_key(
+        "/ndvi/phenology", {"aoi": aoi, "sensor": sensor, "resolution": res},
+    )
+    cached = response_cache.get(cache_key)
+    if cached is None:
+        pheno_raw = read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_phenology"))
+        if pheno_raw is None or pheno_raw.empty:
+            return _error(aoi, sensor, res, f"No phenology data for {aoi}")
+        cached = {"pheno": pheno_raw}
+        response_cache.set(cache_key, cached, ttl_seconds=TTL_DATA)
 
+    pheno = cached["pheno"]
     sub = pheno[pheno["land_cover"] == land_cover].sort_values("year")
     if sub.empty:
         return _error(aoi, sensor, res, f"No phenology data for {aoi} / {land_cover}")

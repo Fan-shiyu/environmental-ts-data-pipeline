@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
+from agent.router import router as agent_router
 from api.cache import response_cache
 from api.routers import burned_area, geometry, health, ndvi
 
@@ -34,6 +35,9 @@ app.include_router(health.router, prefix=_PREFIX)
 app.include_router(ndvi.router, prefix=_PREFIX)
 app.include_router(burned_area.router, prefix=_PREFIX)
 app.include_router(geometry.router, prefix=_PREFIX)
+
+# Agent endpoints live at /agent/* (no /api/v1 prefix) — the router sets its own.
+app.include_router(agent_router)
 
 
 @app.post("/cache/clear", tags=["cache"])

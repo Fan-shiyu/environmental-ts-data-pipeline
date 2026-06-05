@@ -14,7 +14,14 @@ from fastapi import APIRouter, HTTPException
 from pyproj import Geod
 
 from api.cache import response_cache
-from api.dependencies import REPO_ROOT, TTL_GEOMETRY, load_geojson_4326
+from api.dependencies import (
+    REPO_ROOT,
+    TTL_DATA,
+    TTL_GEOMETRY,
+    get_parquet_path,
+    load_geojson_4326,
+    read_parquet_safe,
+)
 
 router = APIRouter(prefix="/geometry", tags=["geometry"])
 
@@ -141,5 +148,30 @@ def geometry_fire_return_period(
         with open(path) as f:
             fc = json.load(f)
 
+    # Additive: year-range metadata derived from ba_monthly (reuses the cache).
+    fc["metadata"] = _ba_year_metadata(aoi)
+
     response_cache.set(cache_key, fc, ttl_seconds=TTL_GEOMETRY)
     return fc
+
+
+def _ba_year_metadata(aoi: str) -> dict:
+    """Year range for an AoI from ba_monthly.parquet. Cached raw DataFrame."""
+    ba_key = response_cache.make_key("ba_monthly_raw", {"aoi": aoi})
+    ba_df = response_cache.get(ba_key)
+    if ba_df is None:
+        ba_df = read_parquet_safe(get_parquet_path(aoi, "burned_area", 500, "ba_monthly"))
+        if ba_df is not None and not ba_df.empty:
+            response_cache.set(ba_key, ba_df, ttl_seconds=TTL_DATA)
+
+    if ba_df is None or ba_df.empty:
+        return {"year_start": None, "year_end": None, "n_years": None, "aoi": aoi}
+
+    year_start = int(ba_df["year"].min())
+    year_end = int(ba_df["year"].max())
+    return {
+        "year_start": year_start,
+        "year_end": year_end,
+        "n_years": year_end - year_start + 1,
+        "aoi": aoi,
+    }

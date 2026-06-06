@@ -3,6 +3,8 @@
 import numpy as np
 import rasterio
 from fastapi import APIRouter, Query
+from rasterio.features import shapes as rasterio_shapes
+from shapely.geometry import shape as shapely_shape
 
 from api.cache import response_cache
 from api.dependencies import (
@@ -176,4 +178,74 @@ def burned_area_annual_grid(aoi: str, year: int) -> dict:
                     "multi_burn_pixels": multi_burn_pixels},
     )
     response_cache.set(cache_key, result, ttl_seconds=TTL_GRID_ANNUAL)
+    return result
+
+
+@router.get("/monthly-geojson")
+def burned_area_monthly_geojson(aoi: str, year: int, month: int) -> dict:
+    """Vectorize burned pixels of a monthly BurnDate raster into a polygon
+    GeoJSON (one feature per burned pixel) for the Shiny download button."""
+    cache_key = response_cache.make_key(
+        "/burned-area/monthly-geojson", {"aoi": aoi, "year": year, "month": month},
+    )
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    matches = list(tif_folder(aoi, "burned_area", _RES).glob(f"{year:04d}-{month:02d}_*{aoi}*.tif"))
+    if not matches:
+        return {"status": "error", "error": f"No burned area TIF for {aoi}/{year}-{month:02d}"}
+
+    with rasterio.open(matches[0]) as src:
+        arr = src.read(1)
+        transform = src.transform
+        crs = src.crs
+        nodata = src.nodata
+
+    # nodata -> 0 so only genuinely burned pixels (BurnDate > 0) are vectorized.
+    if nodata is not None:
+        arr = np.where(arr == nodata, 0, arr)
+    arr = arr.astype(np.int32)
+    burned_mask = (arr > 0).astype(np.uint8)
+
+    features = []
+    for geom, value in rasterio_shapes(arr, mask=burned_mask, transform=transform):
+        features.append({
+            "type": "Feature",
+            "geometry": geom,
+            "properties": {"burn_date": int(value), "year": year, "month": month, "aoi": aoi},
+        })
+
+    # Reproject to EPSG:4326 if the raster is in another CRS (BA TIFs are already 4326).
+    if crs is not None and crs.to_epsg() != 4326:
+        import pyproj
+        from shapely.ops import transform as shapely_transform
+        project = pyproj.Transformer.from_crs(crs.to_epsg(), 4326, always_xy=True).transform
+        features = [
+            {
+                "type": "Feature",
+                "geometry": shapely_transform(project, shapely_shape(f["geometry"])).__geo_interface__,
+                "properties": f["properties"],
+            }
+            for f in features
+        ]
+
+    # Area must come from the burned PIXEL count, not the feature count:
+    # shapes() dissolves adjacent same-burn_date pixels into one polygon, so
+    # len(features) < burned pixels. Pixel count keeps km² consistent with the
+    # grid/summary endpoints.
+    burned_pixels = int(burned_mask.sum())
+    burned_km2 = round(burned_pixels * _PIXEL_AREA_KM2, 2)
+    result = {
+        "type": "FeatureCollection",
+        "features": features,
+        "metadata": {
+            "aoi": aoi, "year": year, "month": month, "resolution": _RES,
+            "n_burned_features": len(features),
+            "burned_pixels": burned_pixels,
+            "burned_km2": burned_km2,
+            "crs": "EPSG:4326",
+        },
+    }
+    response_cache.set(cache_key, result, ttl_seconds=TTL_GRID_ANNUAL)  # 2 h
     return result

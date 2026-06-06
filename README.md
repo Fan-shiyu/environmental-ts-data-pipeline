@@ -233,6 +233,7 @@ uvicorn serve:app   --port 8000       # data API + /agent
 | `GET /ndvi/monthly-anomaly-grid` | per-pixel NDVI anomaly vs the same-month baseline of all prior years (monthly Delta Map) |
 | `GET /burned-area/summary`, `/burned-area/daily` | monthly km² vs baseline; per-day km² |
 | `GET /burned-area/annual-grid`, `/burned-area/monthly-grid` | per-pixel burn frequency / BurnDate grid |
+| `GET /burned-area/monthly-geojson` | burned pixels vectorized to a downloadable polygon GeoJSON (one polygon per contiguous same-day burn) |
 | `GET /geometry/aoi`, `/geometry/landcover`, `/geometry/fire-return-period` | GeoJSON (landcover/FRP support `simplified=`) |
 | `POST /cache/clear` | clear the in-memory cache (used after a deploy) |
 

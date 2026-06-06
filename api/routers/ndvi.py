@@ -283,6 +283,35 @@ def ndvi_phenology(
 # Per-pixel grid endpoints (compact 2D grid for the Shiny Delta Map hot path)
 # ---------------------------------------------------------------------------
 
+@router.get("/annual", response_model=APIResponse)
+def ndvi_annual(
+    aoi: str,
+    sensor: str,
+    resolution: str = "auto",
+    format: str = Query("table", pattern="^(table|agent)$"),
+) -> APIResponse:
+    """Annual-mean NDVI time series (one row per year) from ndvi_annual.parquet.
+    Matches the Shiny annual view: year, mean_ndvi, n_months, is_complete."""
+    res = resolve_resolution(sensor, resolution, None, None)
+    cache_key = response_cache.make_key(
+        "/ndvi/annual", {"aoi": aoi, "sensor": sensor, "resolution": res},
+    )
+    cached = response_cache.get(cache_key)
+    if cached is None:
+        df_raw = read_parquet_safe(get_parquet_path(aoi, sensor, res, "ndvi_annual"))
+        if df_raw is None or df_raw.empty:
+            return _error(aoi, sensor, res, f"ndvi_annual not available for {aoi}/{sensor}/{res}m")
+        cached = {"df": df_raw}
+        response_cache.set(cache_key, cached, ttl_seconds=TTL_DATA)
+
+    df = cached["df"].sort_values("year")
+    cols = ["year", "mean_ndvi", "n_months", "is_complete"]
+    return APIResponse(
+        data=df_to_records(df, cols),
+        metadata=_meta(aoi, sensor, res, len(df)),
+    )
+
+
 def _read_ndvi_tif(path):
     """Read a single NDVI GeoTIFF -> (float array with NaN nodata, transform, crs, shape)."""
     with rasterio.open(path) as src:

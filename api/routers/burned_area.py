@@ -1,13 +1,20 @@
 """Burned area endpoints: monthly summary, daily activity. Resolution fixed at 500m."""
 
+import numpy as np
+import rasterio
 from fastapi import APIRouter, Query
 
 from api.cache import response_cache
 from api.dependencies import (
     TTL_DATA,
+    TTL_GRID_ANNUAL,
+    TTL_GRID_MONTHLY,
+    apply_aoi_mask,
+    build_grid_response,
     df_to_records,
     get_parquet_path,
     read_parquet_safe,
+    tif_folder,
     ym_filter,
     _max_ym,
 )
@@ -86,3 +93,87 @@ def burned_area_daily(
     meta = {"aoi": aoi, "resolution": _RES, "year": year, "n_records": len(df)}
     cols = ["year", "date", "burned_km2"]
     return APIResponse(data=df_to_records(df, cols), metadata=meta)
+
+
+# ---------------------------------------------------------------------------
+# Per-pixel grid endpoints (BurnDate; compact 2D grid). Resolution always 500m.
+# ---------------------------------------------------------------------------
+
+_PIXEL_AREA_KM2 = (_RES / 1000) ** 2  # 0.25 km² per 500m pixel
+
+
+def _read_ba_tif(path):
+    """Read a BurnDate GeoTIFF -> (float array with NaN nodata, transform, crs, shape)."""
+    with rasterio.open(path) as src:
+        arr = src.read(1).astype(float)
+        if src.nodata is not None:
+            arr[arr == src.nodata] = np.nan
+        return arr, src.transform, src.crs, arr.shape
+
+
+@router.get("/monthly-grid")
+def burned_area_monthly_grid(aoi: str, year: int, month: int) -> dict:
+    cache_key = response_cache.make_key(
+        "/burned-area/monthly-grid", {"aoi": aoi, "year": year, "month": month},
+    )
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    matches = list(tif_folder(aoi, "burned_area", _RES).glob(f"{year:04d}-{month:02d}_*{aoi}*.tif"))
+    if not matches:
+        return {"status": "error", "error": f"No burned area TIF for {aoi}/{year}-{month:02d}"}
+
+    arr, transform, crs, shape = _read_ba_tif(matches[0])
+    arr = apply_aoi_mask(arr, aoi, transform, shape)
+
+    burned_pixels = int(np.sum((arr > 0) & (~np.isnan(arr))))
+    burned_km2 = round(burned_pixels * _PIXEL_AREA_KM2, 2)
+
+    result = build_grid_response(
+        arr, transform, shape, aoi, "burned_area", _RES, crs,
+        extra_meta={"year": year, "month": month,
+                    "burned_pixels": burned_pixels, "burned_km2": burned_km2},
+    )
+    response_cache.set(cache_key, result, ttl_seconds=TTL_GRID_MONTHLY)
+    return result
+
+
+@router.get("/annual-grid")
+def burned_area_annual_grid(aoi: str, year: int) -> dict:
+    cache_key = response_cache.make_key("/burned-area/annual-grid", {"aoi": aoi, "year": year})
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    files = sorted(tif_folder(aoi, "burned_area", _RES).glob(f"{year:04d}-??_*{aoi}*.tif"))
+    if not files:
+        return {"status": "error", "error": f"No burned area TIFs for {aoi}/{year}"}
+
+    arrays, transform, crs, shape = [], None, None, None
+    for f in files:
+        arr, t, c, s = _read_ba_tif(f)
+        # binary burned flag per month, NaN-preserving
+        burned = np.where(np.isnan(arr), np.nan, np.where(arr > 0, 1.0, 0.0))
+        arrays.append(burned)
+        if transform is None:
+            transform, crs, shape = t, c, s
+
+    stack = np.stack(arrays, axis=0)
+    burn_count = np.nansum(stack, axis=0).astype(float)
+    burn_count[np.all(np.isnan(stack), axis=0)] = np.nan  # never-valid pixels -> NaN
+    burn_count = apply_aoi_mask(burn_count, aoi, transform, shape)
+
+    burned_pixels = int(np.nansum(burn_count > 0))
+    multi_burn_pixels = int(np.nansum(burn_count > 1))
+    total_burned_km2 = round(burned_pixels * _PIXEL_AREA_KM2, 2)
+
+    result = build_grid_response(
+        burn_count, transform, shape, aoi, "burned_area", _RES, crs,
+        extra_meta={"year": year, "months_available": len(files),
+                    "burned_pixels": burned_pixels,
+                    "total_burned_km2": total_burned_km2,
+                    "multi_burn_pixels": multi_burn_pixels},
+    )
+    response_cache.set(cache_key, result, ttl_seconds=TTL_GRID_ANNUAL)
+    return result

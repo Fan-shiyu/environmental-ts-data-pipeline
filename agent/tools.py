@@ -9,8 +9,13 @@ passing format="agent" since those functions use FastAPI Query() defaults.
 import json
 import statistics
 
+from pyproj import Geod
+from shapely.geometry import shape as shapely_shape
+
 from api.dependencies import REPO_ROOT
-from api.routers import burned_area, health, ndvi
+from api.routers import burned_area, geometry, health, ndvi
+
+_GEOD = Geod(ellps="WGS84")
 
 TOOLS = [
     {
@@ -148,11 +153,12 @@ TOOLS = [
     {
         "name": "get_fire_return_period",
         "description": """
-            Get the fire return period map showing how frequently
-            each part of the study area burns (in years). Use this
-            when the user asks about fire-prone areas, which zones
-            burn most often, or fire management planning.
-            Returns spatial data as a summary (not the full GeoJSON).
+            Get quick overall fire-return-period statistics for the
+            study area: min, max, and mean years between burns, plus
+            the number of features. A single high-level snapshot.
+            For 'which parts burn most often', how much AREA burns
+            frequently, fire-prone zones, or the distribution of fire
+            frequencies, use get_fire_return_summary instead.
         """,
         "input_schema": {
             "type": "object",
@@ -160,6 +166,74 @@ TOOLS = [
                 "aoi": {"type": "string", "enum": ["Zambia_Mponda", "Zambia_WL"]},
             },
             "required": ["aoi"],
+        },
+    },
+    {
+        "name": "get_landcover_spatial_summary",
+        "description": """
+            Get area statistics for each land cover class: how much of
+            the study area each class covers in hectares and percentage.
+            Use this when the user asks about land cover distribution,
+            where specific vegetation types are located, how much of the
+            area is crops/trees/rangeland, or the spatial composition
+            of the study area. Only available for Zambia_Mponda.
+        """,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "aoi": {"type": "string", "enum": ["Zambia_Mponda"]},
+            },
+            "required": ["aoi"],
+        },
+    },
+    {
+        "name": "get_fire_return_summary",
+        "description": """
+            THE tool for spatial fire-frequency questions. Returns the
+            AREA-WEIGHTED distribution of fire return periods (what % of
+            the study area burns every 1-3 / 3-7 / 7-15 / 15+ years) plus
+            mean and median FRP, over 25+ years of data.
+            Use whenever the user asks which parts or zones burn most
+            often, where the fire-prone areas are, how much area burns
+            frequently, fire frequency patterns, or fire management
+            planning. Prefer this over get_fire_return_period for any
+            'where' / 'which part' / 'how much area' fire question.
+        """,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "aoi": {"type": "string", "enum": ["Zambia_Mponda", "Zambia_WL"]},
+            },
+            "required": ["aoi"],
+        },
+    },
+    {
+        "name": "get_ndvi_spatial_change",
+        "description": """
+            Get a spatial summary of NDVI change between two time periods:
+            total area gaining/losing vegetation in km² and percentage.
+
+            Two modes:
+            - Annual: compare annual mean NDVI between year_a and year_b
+              (omit month parameter)
+            - Monthly: compare a specific month across two years
+              (provide month parameter, 1-12)
+
+            Use when the user asks where vegetation changed, which areas
+            improved or declined, or how a specific month compares
+            across years.
+        """,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "aoi": {"type": "string", "enum": ["Zambia_Mponda", "Zambia_WL"]},
+                "sensor": {"type": "string", "enum": ["sentinel2", "modis"]},
+                "resolution": {"type": "string", "default": "auto"},
+                "year_a": {"type": "integer", "description": "baseline year"},
+                "year_b": {"type": "integer", "description": "comparison year"},
+                "month": {"type": "integer", "description": "1-12. Omit for annual comparison."},
+            },
+            "required": ["aoi", "sensor", "year_a", "year_b"],
         },
     },
 ]
@@ -198,6 +272,128 @@ def _fire_return_period_summary(aoi: str) -> dict:
         "frp_years_mean": round(statistics.mean(frp_vals), 2),
         "interpretation": "frp_years = average years between burns; "
                           "lower means that area burns more frequently.",
+    }
+
+
+def _landcover_spatial_summary(aoi: str) -> dict:
+    """Area stats per land cover class from the geometry/landcover endpoint."""
+    fc = geometry.geometry_landcover(aoi=aoi, land_cover_class=None, simplified=True)
+    out: dict = {}
+    for ft in fc.get("features", []):
+        p = ft.get("properties", {})
+        cls = p.get("land_cover")
+        if cls is None:
+            continue
+        out[cls] = {
+            "area_ha": round(p.get("area_ha"), 1) if p.get("area_ha") is not None else None,
+            "pct_of_study_area": p.get("pct_of_study_area"),
+        }
+    return out
+
+
+def _fire_return_summary(aoi: str) -> dict:
+    """Area-weighted distribution of fire return periods across the AoI."""
+    fc = geometry.geometry_fire_return_period(aoi=aoi)
+    meta = fc.get("metadata", {})
+    buckets = {
+        "burns_almost_every_year_1_to_3": 0.0,
+        "frequent_3_to_7_years": 0.0,
+        "moderate_7_to_15_years": 0.0,
+        "rare_over_15_years": 0.0,
+    }
+    total_area = 0.0
+    weighted_vals: list[tuple[float, float]] = []  # (frp_years, area)
+    for ft in fc.get("features", []):
+        frp = ft.get("properties", {}).get("frp_years")
+        if frp is None:
+            continue
+        try:
+            area_m2, _ = _GEOD.geometry_area_perimeter(shapely_shape(ft["geometry"]))
+        except Exception:
+            continue
+        area = abs(area_m2)
+        total_area += area
+        weighted_vals.append((frp, area))
+        if frp < 3:
+            buckets["burns_almost_every_year_1_to_3"] += area
+        elif frp < 7:
+            buckets["frequent_3_to_7_years"] += area
+        elif frp < 15:
+            buckets["moderate_7_to_15_years"] += area
+        else:
+            buckets["rare_over_15_years"] += area
+
+    if total_area == 0:
+        return {"error": f"No fire return period data for {aoi}"}
+
+    # Area-weighted mean; median by cumulative area over sorted FRP.
+    mean_frp = sum(v * a for v, a in weighted_vals) / total_area
+    weighted_vals.sort(key=lambda x: x[0])
+    cum, median_frp = 0.0, weighted_vals[-1][0]
+    for v, a in weighted_vals:
+        cum += a
+        if cum >= total_area / 2:
+            median_frp = v
+            break
+
+    return {
+        "n_years_data": meta.get("n_years"),
+        "year_start": meta.get("year_start"),
+        "year_end": meta.get("year_end"),
+        "mean_frp_years": round(mean_frp, 2),
+        "median_frp_years": round(median_frp, 1),
+        "distribution": {
+            k: {"pct_area": round(100 * v / total_area, 1)} for k, v in buckets.items()
+        },
+    }
+
+
+def _ndvi_spatial_change(aoi, sensor, year_a, year_b, resolution="auto", month=None) -> dict:
+    """Per-pixel NDVI delta summary between two years (annual or a given month)."""
+    if month is not None:
+        ga = ndvi.ndvi_monthly_grid(aoi=aoi, sensor=sensor, year=int(year_a),
+                                    month=int(month), resolution=resolution)
+        gb = ndvi.ndvi_monthly_grid(aoi=aoi, sensor=sensor, year=int(year_b),
+                                    month=int(month), resolution=resolution)
+        period = f"{year_a} to {year_b} (month {int(month)})"
+    else:
+        ga = ndvi.ndvi_annual_grid(aoi=aoi, sensor=sensor, year=int(year_a), resolution=resolution)
+        gb = ndvi.ndvi_annual_grid(aoi=aoi, sensor=sensor, year=int(year_b), resolution=resolution)
+        period = f"{year_a} to {year_b}"
+
+    for g, yr in ((ga, year_a), (gb, year_b)):
+        if g.get("status") != "ok":
+            return {"error": g.get("error", f"No grid data for {yr}")}
+
+    res_m = ga["metadata"]["resolution"]
+    px_area = (res_m / 1000) ** 2  # nominal km² per pixel
+    va, vb = ga["grid"]["values"], gb["grid"]["values"]
+
+    deltas = []
+    for row_a, row_b in zip(va, vb):
+        for a, b in zip(row_a, row_b):
+            if a is not None and b is not None:
+                deltas.append(b - a)
+
+    if not deltas:
+        return {"error": f"No overlapping valid pixels for {period}"}
+
+    thr = 0.02
+    n_total = len(deltas)
+    gain = [d for d in deltas if d > thr]
+    loss = [d for d in deltas if d < -thr]
+    return {
+        "period": period,
+        "sensor": sensor,
+        "resolution": res_m,
+        "gain_km2": round(len(gain) * px_area, 2),
+        "loss_km2": round(len(loss) * px_area, 2),
+        "total_area_km2": round(n_total * px_area, 2),
+        "pct_gaining": round(100 * len(gain) / n_total, 1),
+        "pct_losing": round(100 * len(loss) / n_total, 1),
+        "mean_ndvi_change": round(sum(deltas) / n_total, 4),
+        "max_gain": round(max(deltas), 4),
+        "max_loss": round(min(deltas), 4),
     }
 
 
@@ -246,6 +442,20 @@ def call_tool(name: str, args: dict) -> dict:
 
         if name == "get_fire_return_period":
             return _fire_return_period_summary(args["aoi"])
+
+        if name == "get_landcover_spatial_summary":
+            return _landcover_spatial_summary(args["aoi"])
+
+        if name == "get_fire_return_summary":
+            return _fire_return_summary(args["aoi"])
+
+        if name == "get_ndvi_spatial_change":
+            return _ndvi_spatial_change(
+                aoi=args["aoi"], sensor=args["sensor"],
+                year_a=args["year_a"], year_b=args["year_b"],
+                resolution=args.get("resolution", "auto"),
+                month=args.get("month"),
+            )
 
         return {"error": f"Unknown tool: {name}"}
 

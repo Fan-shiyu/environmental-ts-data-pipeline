@@ -1,14 +1,21 @@
 """NDVI endpoints: timeseries, by-landcover, anomaly, phenology."""
 
+import numpy as np
+import rasterio
 from fastapi import APIRouter, Query
 
 from api.cache import response_cache
 from api.dependencies import (
     TTL_DATA,
+    TTL_GRID_ANNUAL,
+    TTL_GRID_MONTHLY,
+    apply_aoi_mask,
+    build_grid_response,
     df_to_records,
     get_parquet_path,
     read_parquet_safe,
     resolve_resolution,
+    tif_folder,
     ym_filter,
     _max_ym,
 )
@@ -270,3 +277,76 @@ def ndvi_phenology(
         data=df_to_records(sub),
         metadata=_meta(aoi, sensor, res, len(sub), extra={"land_cover": land_cover}),
     )
+
+
+# ---------------------------------------------------------------------------
+# Per-pixel grid endpoints (compact 2D grid for the Shiny Delta Map hot path)
+# ---------------------------------------------------------------------------
+
+def _read_ndvi_tif(path):
+    """Read a single NDVI GeoTIFF -> (float array with NaN nodata, transform, crs, shape)."""
+    with rasterio.open(path) as src:
+        arr = src.read(1).astype(float)
+        if src.nodata is not None:
+            arr[arr == src.nodata] = np.nan
+        return arr, src.transform, src.crs, arr.shape
+
+
+@router.get("/annual-grid")
+def ndvi_annual_grid(aoi: str, sensor: str, year: int, resolution: str = "auto") -> dict:
+    res = resolve_resolution(sensor, resolution, None, None)
+    cache_key = response_cache.make_key(
+        "/ndvi/annual-grid",
+        {"aoi": aoi, "sensor": sensor, "resolution": res, "year": year},
+    )
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    folder = tif_folder(aoi, sensor, res)
+    files = sorted(folder.glob(f"{year:04d}-??_NDVI_{aoi}.tif"))
+    if not files:
+        return {"status": "error", "error": f"No TIF files for {aoi}/{sensor}/{res}m/{year}"}
+
+    arrays, transform, crs, shape = [], None, None, None
+    for f in files:
+        arr, t, c, s = _read_ndvi_tif(f)
+        arrays.append(arr)
+        if transform is None:
+            transform, crs, shape = t, c, s
+
+    annual_mean = np.nanmean(np.stack(arrays, axis=0), axis=0)
+    annual_mean = apply_aoi_mask(annual_mean, aoi, transform, shape)
+    result = build_grid_response(
+        annual_mean, transform, shape, aoi, sensor, res, crs,
+        extra_meta={"year": year, "months_available": len(files)},
+    )
+    response_cache.set(cache_key, result, ttl_seconds=TTL_GRID_ANNUAL)
+    return result
+
+
+@router.get("/monthly-grid")
+def ndvi_monthly_grid(aoi: str, sensor: str, year: int, month: int,
+                      resolution: str = "auto") -> dict:
+    res = resolve_resolution(sensor, resolution, None, None)
+    cache_key = response_cache.make_key(
+        "/ndvi/monthly-grid",
+        {"aoi": aoi, "sensor": sensor, "resolution": res, "year": year, "month": month},
+    )
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    tif = tif_folder(aoi, sensor, res) / f"{year:04d}-{month:02d}_NDVI_{aoi}.tif"
+    if not tif.exists():
+        return {"status": "error",
+                "error": f"No TIF for {aoi}/{sensor}/{res}m/{year}-{month:02d}"}
+
+    arr, transform, crs, shape = _read_ndvi_tif(tif)
+    arr = apply_aoi_mask(arr, aoi, transform, shape)
+    result = build_grid_response(
+        arr, transform, shape, aoi, sensor, res, crs,
+        extra_meta={"year": year, "month": month},
+    )
+    response_cache.set(cache_key, result, ttl_seconds=TTL_GRID_MONTHLY)
+    return result

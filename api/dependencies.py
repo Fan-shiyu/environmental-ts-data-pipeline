@@ -13,6 +13,9 @@ from pathlib import Path
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import rasterio
+from rasterio.io import MemoryFile
+from rasterio.mask import mask as rio_mask
 
 from pipeline.config import load_config
 
@@ -235,6 +238,64 @@ def df_to_records(df: pd.DataFrame, columns: list[str] | None = None) -> list[di
 # ---------------------------------------------------------------------------
 # Geometry loading + optional simplification
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Per-pixel grid helpers (shared by ndvi + burned_area grid endpoints)
+# ---------------------------------------------------------------------------
+
+# Raw monthly TIFs live under the pipeline output root (NOT outputs/processed/).
+TIF_OUTPUT_ROOT = REPO_ROOT / "outputs"
+TTL_GRID_ANNUAL = 7200   # 2 h
+TTL_GRID_MONTHLY = 3600  # 1 h
+
+
+def tif_folder(aoi: str, sensor: str, resolution: int) -> Path:
+    """Folder holding the raw monthly GeoTIFFs: outputs/{aoi}/{sensor}/{res}m."""
+    return TIF_OUTPUT_ROOT / aoi / sensor / f"{resolution}m"
+
+
+def apply_aoi_mask(arr, aoi: str, transform, shape):
+    """Set pixels outside the AoI polygon to NaN. Returns arr unchanged if the
+    AoI GeoJSON is missing."""
+    aoi_path = REPO_ROOT / "config" / "aoi" / f"AoI_{aoi}.geojson"
+    if not aoi_path.exists():
+        return arr
+    gdf = gpd.read_file(aoi_path).to_crs("EPSG:4326")
+    shapes = [g.__geo_interface__ for g in gdf.geometry]
+    with MemoryFile() as mf:
+        with mf.open(driver="GTiff", height=shape[0], width=shape[1], count=1,
+                     dtype="float64", crs="EPSG:4326", transform=transform) as ds:
+            ds.write(arr.astype("float64"), 1)
+        with mf.open() as ds:
+            masked, _ = rio_mask(ds, shapes, crop=False, nodata=np.nan, filled=True)
+    return masked[0]
+
+
+def build_grid_response(arr, transform, shape, aoi, sensor, resolution, crs,
+                        extra_meta: dict | None = None) -> dict:
+    """Compact 2D grid: 1D lats + 1D lons + 2D values matrix (NaN -> None).
+    Coords rounded to 6 dp, values to 4 dp."""
+    rows, cols = shape
+    lons = [round(transform.c + (j + 0.5) * transform.a, 6) for j in range(cols)]
+    lats = [round(transform.f + (i + 0.5) * transform.e, 6) for i in range(rows)]
+    values = [
+        [round(float(v), 4) if not np.isnan(v) else None for v in row]
+        for row in arr
+    ]
+    metadata = {
+        "aoi": aoi, "sensor": sensor, "resolution": resolution,
+        "n_pixels": rows * cols,
+        "n_valid_pixels": int(np.sum(~np.isnan(arr))),
+        "crs": str(crs),
+    }
+    if extra_meta:
+        metadata.update(extra_meta)
+    return {
+        "grid": {"lats": lats, "lons": lons, "values": values},
+        "metadata": metadata,
+        "status": "ok",
+    }
+
 
 def load_geojson_4326(path, simplified: bool = True, tolerance_m: int = 50):
     """Read a GeoJSON and return it in EPSG:4326.

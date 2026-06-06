@@ -17,22 +17,7 @@ Replaces the manual GEE JavaScript workflow (preserved in [reference/](reference
 
 ## What's in here (end-to-end flow)
 
-```
-Google Earth Engine
-      │  scripts/backfill_full.py  (history)   scripts/monthly_update.py (scheduled)
-      ▼
-outputs/{aoi}/{sensor}/{res}m/*.tif          ← raw monthly GeoTIFFs
-      │  preprocess/  (Pass A + Pass B)
-      ▼
-outputs/processed/{aoi}/{sensor}/{res}m/*.parquet  + fire_return_period.geojson
-      │  scripts/deploy.py
-      ▼
-Shiny app  www/data/                          ← deployed rasters + tables
-      ▲
-      │  HTTP
-api/  FastAPI data service  ──────────────►  Shiny hot path + AI agent tools
-agent/  AI agent (/agent/chat)
-```
+![Architecture: GEE fetch → Pass A/B preprocessing → deploy → FastAPI data service + AI agent, automated by GitHub Actions](docs/architecture.png)
 
 Three layers:
 

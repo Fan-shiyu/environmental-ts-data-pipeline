@@ -350,3 +350,58 @@ def ndvi_monthly_grid(aoi: str, sensor: str, year: int, month: int,
     )
     response_cache.set(cache_key, result, ttl_seconds=TTL_GRID_MONTHLY)
     return result
+
+
+@router.get("/monthly-anomaly-grid")
+def ndvi_monthly_anomaly_grid(aoi: str, sensor: str, year: int, month: int,
+                              resolution: str = "auto") -> dict:
+    """Per-pixel NDVI anomaly for one month vs the baseline mean of that same
+    calendar month across all prior years. Compact 2D grid; 2 h TTL."""
+    res = resolve_resolution(sensor, resolution, None, None)
+    cache_key = response_cache.make_key(
+        "/ndvi/monthly-anomaly-grid",
+        {"aoi": aoi, "sensor": sensor, "resolution": res, "year": year, "month": month},
+    )
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    folder = tif_folder(aoi, sensor, res)
+    selected = folder / f"{year:04d}-{month:02d}_NDVI_{aoi}.tif"
+    if not selected.exists():
+        return {"status": "error",
+                "error": f"No TIF for {aoi}/{sensor}/{res}m/{year}-{month:02d}"}
+
+    # Same calendar month in every prior year that has data.
+    prior_files = [
+        f for f in sorted(folder.glob(f"????-{month:02d}_NDVI_{aoi}.tif"))
+        if f.name[:4].isdigit() and int(f.name[:4]) < year
+    ]
+    if not prior_files:
+        return {"status": "error",
+                "error": f"No prior-year data for month {month:02d} before {year}"}
+
+    selected_arr, transform, crs, shape = _read_ndvi_tif(selected)
+
+    prior_arrays, baseline_years = [], []
+    for f in prior_files:
+        arr, _, _, _ = _read_ndvi_tif(f)
+        prior_arrays.append(arr)
+        baseline_years.append(int(f.name[:4]))
+
+    baseline_mean = np.nanmean(np.stack(prior_arrays, axis=0), axis=0)
+    delta = selected_arr - baseline_mean
+    delta = apply_aoi_mask(delta, aoi, transform, shape)
+
+    result = build_grid_response(
+        delta, transform, shape, aoi, sensor, res, crs,
+        extra_meta={
+            "year": year, "month": month,
+            "baseline_years": baseline_years,
+            "n_baseline_years": len(baseline_years),
+            "baseline_start": min(baseline_years),
+            "baseline_end": max(baseline_years),
+        },
+    )
+    response_cache.set(cache_key, result, ttl_seconds=TTL_GRID_ANNUAL)  # 2 h
+    return result

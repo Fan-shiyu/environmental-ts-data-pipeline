@@ -230,6 +230,7 @@ uvicorn serve:app   --port 8000       # data API + /agent
 | `GET /ndvi/anomaly` | monthly anomaly + resilience rankings for a year |
 | `GET /ndvi/phenology` | green-up / peak / senescence (Crops, Rangeland) |
 | `GET /ndvi/annual-grid`, `/ndvi/monthly-grid` | per-pixel NDVI as a compact 2-D grid (Delta Map hot path) |
+| `GET /ndvi/monthly-anomaly-grid` | per-pixel NDVI anomaly vs the same-month baseline of all prior years (monthly Delta Map) |
 | `GET /burned-area/summary`, `/burned-area/daily` | monthly km² vs baseline; per-day km² |
 | `GET /burned-area/annual-grid`, `/burned-area/monthly-grid` | per-pixel burn frequency / BurnDate grid |
 | `GET /geometry/aoi`, `/geometry/landcover`, `/geometry/fire-return-period` | GeoJSON (landcover/FRP support `simplified=`) |

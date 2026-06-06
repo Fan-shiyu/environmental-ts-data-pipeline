@@ -58,3 +58,5 @@ htmlcov/
 
 # ruff
 .ruff_cache/
+_uvicorn_run.err
+_uvicorn_run.out

@@ -21,10 +21,27 @@ class ChatRequest(BaseModel):
     provider: str = "anthropic"    # anthropic | openai
 
 
+class ChartReference(BaseModel):
+    type: str
+    endpoint: str
+    params: dict
+    title: str | None = None
+
+
+class TableReference(BaseModel):
+    type: str
+    endpoint: str
+    params: dict
+    title: str | None = None
+    columns: list[str] | None = None
+
+
 class ChatResponse(BaseModel):
     response: str
     tools_called: list[str]
     key_source: str                # "server" or "user"
+    chart: ChartReference | None = None
+    table: TableReference | None = None
     error: str | None = None
 
 
@@ -58,6 +75,8 @@ def chat(request: ChatRequest):
         response=result["response"],
         tools_called=result["tools_called"],
         key_source=key_source,
+        chart=result.get("chart"),
+        table=result.get("table"),
         error=result.get("error"),
     )
 

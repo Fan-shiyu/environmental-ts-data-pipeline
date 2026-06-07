@@ -1,10 +1,33 @@
 """Agent conversation loop: runs one question through tool-calling rounds."""
 
 import json
+import re
 
 from agent.llm_client import chat
 from agent.system_prompt import SYSTEM_PROMPT
 from agent.tools import TOOLS, call_tool
+
+def extract_references(text: str) -> tuple[str, dict | None, dict | None]:
+    """Extract <chart>JSON</chart> and <table>JSON</table> blocks from agent response.
+    Returns (cleaned_text, chart_dict_or_None, table_dict_or_None).
+    """
+    chart = None
+    table = None
+
+    chart_pattern = r'<chart>\s*(\{.*?\})\s*</chart>'
+    chart_match = re.search(chart_pattern, text, re.DOTALL)
+    if chart_match:
+        chart = json.loads(chart_match.group(1))
+        text = text[:chart_match.start()].strip()
+
+    table_pattern = r'<table>\s*(\{.*?\})\s*</table>'
+    table_match = re.search(table_pattern, text, re.DOTALL)
+    if table_match:
+        table = json.loads(table_match.group(1))
+        text = re.sub(table_pattern, '', text, flags=re.DOTALL).strip()
+
+    return text, chart, table
+
 
 MAX_TURNS = 8     # max tool-call rounds before forcing a response
 MAX_HISTORY = 20  # max prior messages to keep
@@ -40,9 +63,13 @@ def run_agent(
 
             # No tool calls -> the model has produced its final answer.
             if not tool_calls:
+                raw_text = message.content or ""
+                clean_text, chart, table = extract_references(raw_text)
                 return {
-                    "response": message.content or "",
+                    "response": clean_text,
                     "tools_called": tools_called,
+                    "chart": chart,
+                    "table": table,
                     "error": None,
                 }
 
@@ -81,6 +108,8 @@ def run_agent(
         return {
             "response": "I wasn't able to complete the analysis. Please try rephrasing.",
             "tools_called": tools_called,
+            "chart": None,
+            "table": None,
             "error": "max_turns_exceeded",
         }
 
@@ -88,6 +117,8 @@ def run_agent(
         return {
             "response": f"Sorry, I hit an error while answering: {exc}",
             "tools_called": tools_called,
+            "chart": None,
+            "table": None,
             "error": str(exc),
         }
 

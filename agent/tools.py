@@ -55,6 +55,24 @@ TOOLS = [
         },
     },
     {
+        "name": "get_ndvi_annual",
+        "description": """
+            Get annual mean NDVI aggregates for a study area. Use this for
+            long-term year-by-year trend questions, or when the user asks how
+            a specific year compares to others overall. Distinct from
+            get_ndvi_timeseries which returns monthly resolution.
+        """,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "aoi": {"type": "string", "enum": ["Zambia_Mponda", "Zambia_WL"]},
+                "sensor": {"type": "string", "enum": ["sentinel2", "modis"]},
+                "resolution": {"type": "string", "default": "auto"},
+            },
+            "required": ["aoi", "sensor"],
+        },
+    },
+    {
         "name": "get_ndvi_by_landcover",
         "description": """
             Get NDVI broken down by land cover class (Trees, Crops,
@@ -408,6 +426,13 @@ def call_tool(name: str, args: dict) -> dict:
                 aoi=args["aoi"], sensor=args["sensor"],
                 resolution=args.get("resolution", "auto"),
                 start=args.get("start"), end=args.get("end"),
+                format="agent",
+            ))
+
+        if name == "get_ndvi_annual":
+            return _as_dict(ndvi.ndvi_annual(
+                aoi=args["aoi"], sensor=args["sensor"],
+                resolution=args.get("resolution", "auto"),
                 format="agent",
             ))
 

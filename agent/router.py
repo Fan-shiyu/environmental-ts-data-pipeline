@@ -23,17 +23,21 @@ class ChatRequest(BaseModel):
 
 class ChartReference(BaseModel):
     type: str
-    endpoint: str
-    params: dict
+    endpoint: str | None = None       # None for Mode B generic charts
+    params: dict | None = None        # None for Mode B generic charts
     title: str | None = None
+    data: list[dict] | None = None    # Mode B only: pre-summarised rows
+    x_key: str | None = None          # Mode B only: which dict key is the x axis
+    y_key: str | None = None          # Mode B only: which dict key is the y axis
 
 
 class TableReference(BaseModel):
     type: str
-    endpoint: str
-    params: dict
+    endpoint: str | None = None       # None for Mode B inline tables
+    params: dict | None = None
     title: str | None = None
     columns: list[str] | None = None
+    data: list[dict] | None = None    # Mode B only: pre-summarised rows
 
 
 class ChatResponse(BaseModel):

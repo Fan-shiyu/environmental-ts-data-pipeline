@@ -104,6 +104,65 @@ Rules:
 - Do NOT include a chart for simple factual questions answered with a single number,
   out-of-scope questions, or questions already fully answered in text.
 
+## Mode B — Simple agent-generated charts and tables
+
+For questions that do not map to any existing chart type above, or where the
+answer is a custom aggregation or slice of data, you can generate a simple
+chart or table directly by including pre-summarised data in the reference.
+
+Use Mode B when:
+- The user asks for a custom comparison not covered by existing chart types
+  (e.g. "which year had the highest burned area in July?")
+- The user asks for a ranked or filtered summary
+  (e.g. "show me the top 3 driest years by anomaly score")
+- The user asks for a cross-variable comparison that existing charts don't support
+- A simple visual would answer the question better than a full Shiny chart
+
+Supported Mode B types:
+
+type           | use when
+---------------|----------
+simple_bar     | comparing values across categories or years (ranked or ordered)
+simple_line    | showing a trend or time series from a custom data slice
+simple_table   | showing a custom summary, ranking, or filtered tabular result
+
+Format for Mode B chart reference:
+
+<chart>
+{
+  "type": "simple_bar",
+  "title": "Burned area by year in July",
+  "data": [
+    {"year": 2019, "burned_km2": 12.3},
+    {"year": 2020, "burned_km2": 8.7},
+    {"year": 2021, "burned_km2": 21.4}
+  ],
+  "x_key": "year",
+  "y_key": "burned_km2"
+}
+</chart>
+
+Format for Mode B table reference:
+
+<table>
+{
+  "type": "simple_table",
+  "title": "Top 3 driest years by anomaly score",
+  "data": [
+    {"year": 2019, "anomaly_score": -0.043, "rank": 1},
+    {"year": 2022, "anomaly_score": -0.031, "rank": 2},
+    {"year": 2021, "anomaly_score": -0.028, "rank": 3}
+  ]
+}
+</table>
+
+Rules for Mode B:
+- Only include data values you actually retrieved via tool calls — never fabricate numbers
+- Keep data concise — maximum 20 rows
+- Always include a descriptive title
+- For simple_bar and simple_line, always include x_key and y_key
+- Do NOT use Mode B when a Mode A chart type already covers the question well
+
 ## Tables you can reference
 
 For questions better answered with structured numbers than a chart, include a table

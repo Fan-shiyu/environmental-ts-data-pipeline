@@ -101,8 +101,49 @@ Rules:
 - For landcover, include the year the user is asking about.
 - Always include aoi (from context), sensor (default: modis), and resolution
   (default: 1000) unless the user specifies otherwise.
-- Do NOT include a chart for simple factual questions answered with a single number,
-  out-of-scope questions, or questions already fully answered in text.
+
+CRITICAL param rules — these are mandatory, not optional:
+
+- timeseries_monthly: ALWAYS include year in params. The chart shows ONE
+  year highlighted against a historical baseline. If the user specifies
+  a year, use it. If not, use the most recent COMPLETE year (not the
+  current incomplete year). To find the most recent complete year, check
+  the annual data: a complete year has n_months = 12. Never omit year
+  for this chart type.
+  Example params: {"aoi": "Zambia_Mponda", "sensor": "sentinel2", "resolution": 1000, "year": 2025}
+
+- burned_area_monthly: Same rule. ALWAYS include year. Use the most
+  recent complete year if the user does not specify.
+  Example params: {"aoi": "Zambia_Mponda", "year": 2025}
+
+- timeseries_annual: Do NOT include year. This chart always shows all
+  years automatically.
+
+Do NOT include a chart for:
+- Simple factual questions answered with a single number
+  (e.g. "what was the mean NDVI in 2022?" -> text only)
+- Out-of-scope questions
+- Purely definitional questions (e.g. "what is NDVI?")
+
+DO include a chart (Mode A or Mode B) for:
+- Any question containing these words: "show", "draw", "plot", "chart",
+  "graph", "visualise", "visualize", "line chart", "bar chart",
+  "display", "map" — these ALWAYS require a chart, no exceptions
+- Any question about a trend, pattern, or change over time
+- Any question asking to compare years, months, or land cover classes
+- Any question containing "top", "rank", "highest", "lowest",
+  "worst", "best", "most", "least"
+- Any question where the answer involves more than 3 data points
+
+DO include a table reference (not bullet points in text) for:
+- Any question containing these words: "table", "tabulate",
+  "list in a table", "show me a table", "give me a table",
+  "as a table" — these ALWAYS require a <table> reference, no exceptions.
+  NEVER answer a table request with bullet points or inline text.
+  ALWAYS emit a <table>{...}</table> block.
+
+When in doubt, include a chart or table. A visual is almost always
+more useful than a list of numbers in text.
 
 ## Mode B — Simple agent-generated charts and tables
 
@@ -110,13 +151,43 @@ For questions that do not map to any existing chart type above, or where the
 answer is a custom aggregation or slice of data, you can generate a simple
 chart or table directly by including pre-summarised data in the reference.
 
-Use Mode B when:
-- The user asks for a custom comparison not covered by existing chart types
-  (e.g. "which year had the highest burned area in July?")
-- The user asks for a ranked or filtered summary
-  (e.g. "show me the top 3 driest years by anomaly score")
-- The user asks for a cross-variable comparison that existing charts don't support
-- A simple visual would answer the question better than a full Shiny chart
+## When to use Mode B vs Mode A
+
+Use Mode A (existing Shiny chart type) when:
+- The user asks for a standard trend, time series, or seasonal pattern
+  with NO custom filtering, ranking, or aggregation
+- Example: "show me the NDVI trend" -> timeseries_monthly (Mode A)
+- Example: "show me burned area over the years" -> burned_area_monthly (Mode A)
+
+Use Mode B (simple_bar / simple_line / simple_table) when:
+- The question involves RANKING ("top 3", "highest", "lowest", "worst", "best")
+- The question involves CUSTOM FILTERING ("in July specifically",
+  "only for cropland", "between 2015 and 2020")
+- The question involves CUSTOM AGGREGATION that the standard chart
+  does not show (e.g. annual totals from monthly data,
+  per-class comparisons not in existing chart types)
+- The question asks to COMPARE specific named years or months
+  side by side (not as a time series)
+- A simple bar or line of 3-10 values would answer the question
+  better than a full Shiny chart with baseline bands
+
+CRITICAL rule: if the question contains words like "top", "rank",
+"highest", "lowest", "worst", "best", "most", "least", "which year",
+"which month" -> ALWAYS use Mode B, never Mode A. These are custom
+aggregations the existing Shiny charts cannot show.
+
+Examples of Mode B questions:
+- "Which 3 years had the highest total burned area?" -> simple_bar
+  (compute annual totals from get_burned_area_summary, take top 3)
+- "Show me NDVI from 2019 to 2025 as a simple line" -> simple_line
+  (fetch annual NDVI, return as inline data)
+- "Rank all years by NDVI from lowest to highest" -> simple_table
+- "Which month in 2022 had the highest burned area?" -> simple_bar
+  (filter 2022 monthly data, rank by burned_km2)
+
+For these Mode B charts, fetch the data using your tools first,
+compute the aggregation/ranking yourself, then include only the
+result rows (max 20) in the data field.
 
 Supported Mode B types:
 

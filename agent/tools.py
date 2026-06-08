@@ -148,6 +148,7 @@ TOOLS = [
             After calling this tool, include a chart reference based on the question type:
             - For temporal questions (fire trends over time, fire season extent, how this year compares to baseline): use burned_area_monthly chart. Copy aoi and year (most recent complete year unless user specified) into params.
             - For spatial questions (where fires occurred in a specific year, burn map, spatial burn pattern): use burned_area_map chart. Copy aoi and year into params.
+            - EXCEPTION — do NOT include a Mode A chart if the question involves ranking, aggregation, or custom filtering (e.g. "which year had the highest total", "top 3 years", "most burned year", "compare total across years"). For these questions, use Mode B simple_bar with inline data instead.
             - If unsure, default to burned_area_monthly.
             Never answer a fire data question with text alone when chart data is available.
         """,
@@ -571,6 +572,10 @@ def make_chart_hint(tool_name: str, args: dict) -> str | None:
                    {"aoi": aoi, "year": "<replace_with_most_recent_complete_year>"})
             + "\nUse burned_area_map (endpoint /api/v1/burned-area/annual-grid) instead "
               "if the question is about spatial burn patterns or a specific year's burn map."
+            + "\nEXCEPTION: if the question involves ranking, aggregation, or custom "
+              "filtering ('which year had the highest total', 'top 3 years', 'most burned "
+              "year', 'compare totals across years'), skip this Mode A chart entirely and "
+              "use Mode B simple_bar with inline data instead."
         )
     if tool_name == "get_burned_area_daily":
         return _block("burned_area_daily",

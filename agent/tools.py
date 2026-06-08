@@ -500,3 +500,85 @@ def call_tool(name: str, args: dict) -> dict:
 
     except Exception as exc:  # surface errors to the LLM rather than 500
         return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+# ---------------------------------------------------------------------------
+# Chart hook hints — injected into tool results so the model sees them
+# immediately before generating its response (tool descriptions are read
+# only during tool selection, not during response generation).
+# ---------------------------------------------------------------------------
+
+_CHART_ENDPOINTS = {
+    "timeseries_monthly":  "/api/v1/ndvi/timeseries",
+    "timeseries_annual":   "/api/v1/ndvi/annual",
+    "landcover":           "/api/v1/ndvi/by-landcover",
+    "anomaly":             "/api/v1/ndvi/anomaly",
+    "phenology":           "/api/v1/ndvi/phenology",
+    "burned_area_monthly": "/api/v1/burned-area/summary",
+    "burned_area_map":     "/api/v1/burned-area/annual-grid",
+    "burned_area_daily":   "/api/v1/burned-area/daily",
+    "frp_map":             "/api/v1/geometry/fire-return-period",
+    "delta_map":           "/api/v1/ndvi/annual-grid",
+}
+
+
+def make_chart_hint(tool_name: str, args: dict) -> str | None:
+    """Return a _chart_required hint string to inject into the tool result.
+
+    The hint is a near-complete <chart> block with actual param values from
+    the call, so the model can copy it verbatim into its response.
+    Returns None for tools that do not require a chart.
+    """
+    aoi = args.get("aoi", "")
+    sensor = args.get("sensor", "modis")
+    resolution = args.get("resolution", "auto")
+
+    def _block(chart_type: str, params: dict) -> str:
+        import json as _json
+        endpoint = _CHART_ENDPOINTS[chart_type]
+        ref = {"type": chart_type, "endpoint": endpoint, "params": params}
+        return (
+            f"MANDATORY_CHART: You MUST copy this block verbatim into your response "
+            f"(do NOT omit it):\n"
+            f"<chart>{_json.dumps(ref)}</chart>"
+        )
+
+    if tool_name == "get_ndvi_timeseries":
+        return (
+            _block("timeseries_monthly",
+                   {"aoi": aoi, "sensor": sensor, "resolution": resolution,
+                    "year": "<replace_with_most_recent_complete_year_n_months_12>"})
+            + "\nReplace year placeholder with the most recent year that has n_months=12 in the data above."
+        )
+    if tool_name == "get_ndvi_annual":
+        return _block("timeseries_annual",
+                      {"aoi": aoi, "sensor": sensor, "resolution": resolution})
+    if tool_name == "get_ndvi_by_landcover":
+        return _block("landcover",
+                      {"aoi": aoi, "sensor": sensor, "resolution": resolution,
+                       "year": args.get("year")})
+    if tool_name == "get_ndvi_anomaly":
+        return _block("anomaly",
+                      {"aoi": aoi, "sensor": sensor, "resolution": resolution,
+                       "year": args.get("year")})
+    if tool_name == "get_phenology":
+        return _block("phenology",
+                      {"aoi": aoi, "sensor": sensor, "resolution": resolution,
+                       "land_cover": args.get("land_cover")})
+    if tool_name == "get_burned_area_summary":
+        return (
+            _block("burned_area_monthly",
+                   {"aoi": aoi, "year": "<replace_with_most_recent_complete_year>"})
+            + "\nUse burned_area_map (endpoint /api/v1/burned-area/annual-grid) instead "
+              "if the question is about spatial burn patterns or a specific year's burn map."
+        )
+    if tool_name == "get_burned_area_daily":
+        return _block("burned_area_daily",
+                      {"aoi": aoi, "year": args.get("year")})
+    if tool_name == "get_fire_return_summary":
+        return _block("frp_map", {"aoi": aoi})
+    if tool_name == "get_ndvi_spatial_change":
+        return _block("delta_map",
+                      {"aoi": aoi, "sensor": sensor, "resolution": resolution,
+                       "year_a": args.get("year_a"), "year_b": args.get("year_b")})
+    return None

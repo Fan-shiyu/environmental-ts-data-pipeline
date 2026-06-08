@@ -5,7 +5,7 @@ import re
 
 from agent.llm_client import chat
 from agent.system_prompt import SYSTEM_PROMPT
-from agent.tools import TOOLS, call_tool
+from agent.tools import TOOLS, call_tool, make_chart_hint
 
 def extract_references(text: str) -> tuple[str, dict | None, dict | None]:
     """Extract <chart>JSON</chart> and <table>JSON</table> blocks from agent response.
@@ -97,6 +97,13 @@ def run_agent(
                     args = {}
                 tools_called.append(name)
                 result = call_tool(name, args)
+                # Inject chart hint directly into the tool result so the model
+                # sees the mandatory chart instruction right before it writes its
+                # response. Tool descriptions are only read during tool selection,
+                # not during response generation, so the hint must live here.
+                hint = make_chart_hint(name, args)
+                if hint:
+                    result["_chart_required"] = hint
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,

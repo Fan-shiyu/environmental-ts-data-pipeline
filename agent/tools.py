@@ -40,6 +40,7 @@ TOOLS = [
             Returns one data point per month plus the historical
             typical range and long-term average.
             For land-cover-specific questions, use get_ndvi_by_landcover.
+            After calling this tool, ALWAYS include a timeseries_monthly chart reference in your response. Never answer a monthly NDVI question with text bullet points alone — a chart is mandatory. Copy aoi, sensor, and resolution from your tool call params into the chart params. Set year to the most recent complete year (n_months=12) unless the user specified a different year.
         """,
         "input_schema": {
             "type": "object",
@@ -61,6 +62,7 @@ TOOLS = [
             long-term year-by-year trend questions, or when the user asks how
             a specific year compares to others overall. Distinct from
             get_ndvi_timeseries which returns monthly resolution.
+            After calling this tool, ALWAYS include a timeseries_annual chart reference in your response. This data spans multiple years and is always better communicated visually. Copy aoi, sensor, and resolution from your tool call params. Do not include year in the chart params — this chart always shows all years.
         """,
         "input_schema": {
             "type": "object",
@@ -80,6 +82,7 @@ TOOLS = [
             user asks which land cover type is most productive, how
             crops compare to trees, or anything about specific
             vegetation classes. Only available for Zambia_Mponda.
+            After calling this tool, include a landcover chart reference. Copy aoi, sensor, resolution, and year from your tool call params into the chart params. Note: if the user's question is about anomaly patterns or phenological timing, call get_ndvi_anomaly or get_phenology instead — those tools have dedicated chart types that better represent those questions.
         """,
         "input_schema": {
             "type": "object",
@@ -101,6 +104,7 @@ TOOLS = [
             recovered. Use this when the user asks about drought,
             stress events, resilience, or unusual vegetation conditions
             in a specific year. Only available for Zambia_Mponda.
+            After calling this tool, ALWAYS include an anomaly chart reference. Anomaly patterns are spatial and temporal — a chart is mandatory, not optional. Copy aoi, sensor, resolution, and year from your tool call params into the chart params.
         """,
         "input_schema": {
             "type": "object",
@@ -121,6 +125,7 @@ TOOLS = [
             planting seasons, harvest timing, when crops peak, or
             whether the growing season is shifting earlier or later.
             Only available for Zambia_Mponda, Crops and Rangeland classes.
+            After calling this tool, ALWAYS include a phenology chart reference. Seasonal timing patterns are always better shown visually. Copy aoi, sensor, and resolution from your tool call params into the chart params.
         """,
         "input_schema": {
             "type": "object",
@@ -140,6 +145,11 @@ TOOLS = [
             baseline. Use this when the user asks about fires, burning,
             fire season extent, or whether this year had more or less
             fire than usual. Note: data has ~3 month publication lag.
+            After calling this tool, include a chart reference based on the question type:
+            - For temporal questions (fire trends over time, fire season extent, how this year compares to baseline): use burned_area_monthly chart. Copy aoi and year (most recent complete year unless user specified) into params.
+            - For spatial questions (where fires occurred in a specific year, burn map, spatial burn pattern): use burned_area_map chart. Copy aoi and year into params.
+            - If unsure, default to burned_area_monthly.
+            Never answer a fire data question with text alone when chart data is available.
         """,
         "input_schema": {
             "type": "object",
@@ -158,6 +168,7 @@ TOOLS = [
             exact timing of fire events. Use this when the user asks
             about when fires peaked, fire season timing, or comparing
             fire patterns across years.
+            After calling this tool, ALWAYS include a burned_area_daily chart reference. Daily fire data is always better visualised than listed in text. Copy aoi and year from your tool call params into the chart params.
         """,
         "input_schema": {
             "type": "object",
@@ -177,6 +188,7 @@ TOOLS = [
             For 'which parts burn most often', how much AREA burns
             frequently, fire-prone zones, or the distribution of fire
             frequencies, use get_fire_return_summary instead.
+            Note: this tool returns only aggregate statistics. For any question about WHERE fires occur most frequently or WHICH PARTS of the area are most fire-prone, call get_fire_return_summary instead — it enables spatial map rendering that this tool cannot.
         """,
         "input_schema": {
             "type": "object",
@@ -216,6 +228,7 @@ TOOLS = [
             frequently, fire frequency patterns, or fire management
             planning. Prefer this over get_fire_return_period for any
             'where' / 'which part' / 'how much area' fire question.
+            After calling this tool, ALWAYS include a frp_map chart reference. Fire frequency distribution is inherently spatial — a map is MANDATORY. Copy aoi from your tool call params into the chart params.
         """,
         "input_schema": {
             "type": "object",
@@ -240,6 +253,7 @@ TOOLS = [
             Use when the user asks where vegetation changed, which areas
             improved or declined, or how a specific month compares
             across years.
+            After calling this tool, ALWAYS include a delta_map chart reference. This data is INHERENTLY SPATIAL — a map is MANDATORY, never optional. Answering a spatial change question with text statistics alone is always wrong. Copy aoi, sensor, resolution, year_a, and year_b exactly from your tool call params into the chart params.
         """,
         "input_schema": {
             "type": "object",

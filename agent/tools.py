@@ -254,7 +254,14 @@ TOOLS = [
             Use when the user asks where vegetation changed, which areas
             improved or declined, or how a specific month compares
             across years.
-            After calling this tool, ALWAYS include a delta_map chart reference. This data is INHERENTLY SPATIAL — a map is MANDATORY, never optional. Answering a spatial change question with text statistics alone is always wrong. Copy aoi, sensor, resolution, year_a, and year_b exactly from your tool call params into the chart params.
+            IMPORTANT: if the user names a specific month (e.g. "August 2020 vs
+            August 2023"), you MUST pass the month parameter (1-12). Only omit
+            month for a whole-year comparison.
+            After calling this tool, ALWAYS include a chart reference — this data
+            is INHERENTLY SPATIAL, so a map is MANDATORY and answering with text
+            statistics alone is always wrong. The tool result returns a
+            MANDATORY_CHART block: copy that block verbatim (it is comparison_image
+            when you passed a month, delta_map when you did not).
         """,
         "input_schema": {
             "type": "object",
@@ -583,6 +590,21 @@ def make_chart_hint(tool_name: str, args: dict) -> str | None:
     if tool_name == "get_fire_return_summary":
         return _block("frp_map", {"aoi": aoi})
     if tool_name == "get_ndvi_spatial_change":
+        month = args.get("month")
+        if month is not None:
+            # Month named -> a specific-month spatial comparison. delta_map is
+            # annual-only (whole-year composite) and would ignore the month, so
+            # emit a comparison_image (monthly-grid, side-by-side) instead.
+            import json as _json
+            ref = {"type": "comparison_image",
+                   "endpoint": "/api/v1/ndvi/monthly-grid",
+                   "params": {"aoi": aoi, "sensor": sensor, "resolution": resolution,
+                              "years_vec": [args.get("year_a"), args.get("year_b")],
+                              "month": month}}
+            return (
+                f"MANDATORY_CHART: You MUST copy this block verbatim into your "
+                f"response (do NOT omit it):\n<chart>{_json.dumps(ref)}</chart>"
+            )
         return _block("delta_map",
                       {"aoi": aoi, "sensor": sensor, "resolution": resolution,
                        "year_a": args.get("year_a"), "year_b": args.get("year_b")})

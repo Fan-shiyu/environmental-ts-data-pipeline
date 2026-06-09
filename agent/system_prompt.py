@@ -92,12 +92,17 @@ Supported chart types:
 | burned_area_daily   | /api/v1/burned-area/daily           | user asks about daily fire activity within a specific year |
 | anomaly             | /api/v1/ndvi/anomaly                | user asks about anomalous months, NDVI deficit or surplus in a year |
 | phenology           | /api/v1/ndvi/phenology              | user asks about green-up, peak vegetation, or senescence timing |
-| delta_map           | /api/v1/ndvi/annual-grid            | user asks where vegetation changed spatially, gain/loss locations |
+| delta_map           | /api/v1/ndvi/annual-grid            | user asks where vegetation changed spatially between two YEARS (whole-year composite, no month). Do NOT use when a specific month is named — use comparison_image. |
 | frp_map             | /api/v1/geometry/fire-return-period | user asks which areas burn most frequently or fire return patterns |
 | burned_area_map     | /api/v1/burned-area/annual-grid     | user asks about spatial burn patterns for a specific year |
 | comparison_image    | /api/v1/ndvi/monthly-grid OR /api/v1/burned-area/monthly-grid | user asks to compare NDVI or burn patterns across 2 or more specific years/months side by side |
 
 Rules:
+- delta_map is a WHOLE-YEAR (annual composite) change map and ignores month.
+  If the user names a specific month (e.g. "August 2020 vs August 2023"), you
+  MUST use comparison_image with the ndvi/monthly-grid endpoint, NOT delta_map —
+  even if the question says "spatially" or "change". delta_map is only correct
+  for year-vs-year comparisons with no month specified.
 - For delta_map, include both year_a and year_b in params.
 - For burned_area_map, include year (an integer) in params.
 - For frp_map, no year is needed.
@@ -111,10 +116,15 @@ CRITICAL — comparison_image vs Mode B:
 These two types serve DIFFERENT purposes and must never be confused:
 
 - comparison_image = SPATIAL comparison (where patterns differ across time periods)
-  Use when: "compare NDVI in August 2020 vs August 2023", "compare burn patterns
-  in July 2021 vs July 2023", "show me how vegetation looked in two different years"
+  Use when: "compare NDVI in August 2020 vs August 2023", "compare NDVI in August
+  2020 vs August 2023 spatially", "compare burn patterns in July 2021 vs July 2023",
+  "show me how vegetation looked in two different years"
   These questions ask about SPATIAL PATTERNS — which locations changed, where fires
   were. A map is the only correct answer. Always use comparison_image.
+  IMPORTANT: whenever a specific MONTH is named (August, July, etc.), this is a
+  comparison_image — never delta_map. delta_map is annual-only and would ignore the
+  month, giving a whole-year answer the user did not ask for. The words "spatially"
+  or "change" do NOT make it a delta_map when a month is specified.
 
 - Mode B simple_bar = QUANTITY comparison (how much differs across categories)
   Use when: "which year had the most fire?", "compare total burned area 2021 vs 2023"

@@ -63,11 +63,11 @@ Three layers:
 │   ├── dependencies.py         # path/parquet/grid/geometry helpers
 │   └── routers/                # health, ndvi, burned_area, geometry
 ├── agent/                      # AI agent over the data API
-│   ├── router.py               # /agent/chat, /agent/providers
-│   ├── agent.py                # tool-calling loop
-│   ├── tools.py                # tool defs + in-process dispatch
+│   ├── router.py               # /agent/chat, /agent/providers; ChartReference/TableReference/ChatResponse schemas
+│   ├── agent.py                # tool-calling loop; extract_references(); chart hint injection
+│   ├── tools.py                # tool defs + in-process dispatch + make_chart_hint()
 │   ├── llm_client.py           # LiteLLM multi-provider wrapper
-│   └── system_prompt.py
+│   └── system_prompt.py        # system prompt + chart/table type registry (11 chart types, 5 table types)
 ├── serve.py                    # combined ASGI app: data API + agent
 ├── .github/workflows/          # monthly / annual / manual-backfill automation
 └── reference/                  # legacy GEE JS scripts (read-only)
@@ -226,6 +226,7 @@ uvicorn serve:app   --port 8000       # data API + /agent
 | `GET /health` | status, data-through month, parquet count, cache stats |
 | `GET /available-data` | AoIs, sensors, date ranges, land-cover classes (scanned live) |
 | `GET /ndvi/timeseries` | monthly NDVI + baseline + trend |
+| `GET /ndvi/annual` | annual mean NDVI aggregates + completeness flag (one row per year) |
 | `GET /ndvi/by-landcover` | per-class monthly NDVI for a year |
 | `GET /ndvi/anomaly` | monthly anomaly + resilience rankings for a year |
 | `GET /ndvi/phenology` | green-up / peak / senescence (Crops, Rangeland) |
@@ -267,6 +268,94 @@ curl -X POST http://localhost:8000/agent/chat -H 'Content-Type: application/json
 API keys come from the server environment (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`)
 or the request body (`user_api_key`) — never hard-coded. `GET /agent/providers`
 reports which provider keys are configured.
+
+#### Response schema
+
+`POST /agent/chat` returns a `ChatResponse` with these fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `response` | `str` | Text answer (chart/table XML tags stripped) |
+| `tools_called` | `list[str]` | Tool names called during the loop |
+| `key_source` | `"server" \| "user"` | Which API key was used |
+| `chart` | `ChartReference \| null` | Chart descriptor to render (see below) |
+| `table` | `TableReference \| null` | Table descriptor to render (see below) |
+| `error` | `str \| null` | Error message if the loop failed |
+
+#### Chart references (Mode A and Mode B)
+
+The agent can return a `chart` and/or `table` alongside its text. These are JSON
+descriptors — the Shiny app does the actual rendering. There are two modes:
+
+**Mode A** — references an existing Shiny chart type via API endpoint + params:
+
+```json
+{
+  "type": "timeseries_monthly",
+  "endpoint": "/api/v1/ndvi/timeseries",
+  "params": {"aoi": "Zambia_Mponda", "sensor": "sentinel2", "year": 2024},
+  "title": "Monthly NDVI 2024"
+}
+```
+
+**Mode B** — inline pre-summarised data for custom aggregations or rankings
+(no endpoint; the Shiny app renders directly from the embedded rows):
+
+```json
+{
+  "type": "simple_bar",
+  "title": "Top 3 years by burned area",
+  "data": [{"year": 2018, "burned_km2": 312}, {"year": 2015, "burned_km2": 287}],
+  "x_key": "year",
+  "y_key": "burned_km2"
+}
+```
+
+Supported **Mode A** chart types (11 total):
+
+| type | endpoint | use when |
+|---|---|---|
+| `timeseries_monthly` | `/api/v1/ndvi/timeseries` | monthly NDVI vs historical baseline |
+| `timeseries_annual` | `/api/v1/ndvi/annual` | year-by-year NDVI trend |
+| `landcover` | `/api/v1/ndvi/by-landcover` | NDVI by land cover class |
+| `burned_area_monthly` | `/api/v1/burned-area/summary` | burned area over time / fire seasons |
+| `burned_area_daily` | `/api/v1/burned-area/daily` | daily fire activity within a year |
+| `anomaly` | `/api/v1/ndvi/anomaly` | anomalous months / NDVI deficit or surplus |
+| `phenology` | `/api/v1/ndvi/phenology` | green-up, peak, senescence timing |
+| `delta_map` | `/api/v1/ndvi/annual-grid` | spatial NDVI change between two whole years |
+| `frp_map` | `/api/v1/geometry/fire-return-period` | fire frequency / return period map |
+| `burned_area_map` | `/api/v1/burned-area/annual-grid` | spatial burn pattern for a year |
+| `comparison_image` | `/api/v1/ndvi/monthly-grid` or `/api/v1/burned-area/monthly-grid` | side-by-side spatial comparison across specific months/years |
+
+Supported **Mode B** chart types: `simple_bar`, `simple_line`, `simple_table`.
+
+Supported **table** types (Mode A): `ndvi_annual`, `ndvi_by_class`, `burned_area`, `anomaly`, `phenology`.
+
+#### How chart hints work
+
+Tool descriptions are read by the LLM only during tool selection, not during response
+generation. To guarantee chart emission after a tool call, `make_chart_hint()` in
+`agent/tools.py` builds a near-complete `<chart>{...}</chart>` block (with actual
+argument values filled in) and injects it as `_chart_required` into the tool result
+dict. The model reads this instruction right before it writes its response, making
+chart inclusion mandatory for the 10 tools that have hooks.
+
+#### Agent tools (12 total)
+
+| Tool | Purpose |
+|---|---|
+| `get_available_data` | List AoIs, sensors, date ranges, land-cover classes |
+| `get_ndvi_timeseries` | Monthly NDVI + baseline + trend |
+| `get_ndvi_annual` | Annual mean NDVI aggregates (year-by-year) |
+| `get_ndvi_by_landcover` | Per-class monthly NDVI for a year |
+| `get_ndvi_anomaly` | Monthly anomaly + resilience rankings |
+| `get_phenology` | Green-up / peak / senescence dates |
+| `get_ndvi_spatial_change` | Per-pixel NDVI change between two years/months |
+| `get_burned_area_summary` | Monthly burned km² vs historical baseline |
+| `get_burned_area_daily` | Per-day burned km² for a year |
+| `get_fire_return_period` | GeoJSON geometry with fire-return-period zones |
+| `get_fire_return_summary` | Aggregate fire-return statistics by zone |
+| `get_landcover_spatial_summary` | Land-cover class areas and proportions |
 
 ---
 

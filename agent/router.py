@@ -21,10 +21,31 @@ class ChatRequest(BaseModel):
     provider: str = "anthropic"    # anthropic | openai
 
 
+class ChartReference(BaseModel):
+    type: str
+    endpoint: str | None = None       # None for Mode B generic charts
+    params: dict | None = None        # None for Mode B generic charts
+    title: str | None = None
+    data: list[dict] | None = None    # Mode B only: pre-summarised rows
+    x_key: str | None = None          # Mode B only: which dict key is the x axis
+    y_key: str | None = None          # Mode B only: which dict key is the y axis
+
+
+class TableReference(BaseModel):
+    type: str
+    endpoint: str | None = None       # None for Mode B inline tables
+    params: dict | None = None
+    title: str | None = None
+    columns: list[str] | None = None
+    data: list[dict] | None = None    # Mode B only: pre-summarised rows
+
+
 class ChatResponse(BaseModel):
     response: str
     tools_called: list[str]
     key_source: str                # "server" or "user"
+    chart: ChartReference | None = None
+    table: TableReference | None = None
     error: str | None = None
 
 
@@ -58,6 +79,8 @@ def chat(request: ChatRequest):
         response=result["response"],
         tools_called=result["tools_called"],
         key_source=key_source,
+        chart=result.get("chart"),
+        table=result.get("table"),
         error=result.get("error"),
     )
 

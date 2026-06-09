@@ -40,6 +40,7 @@ TOOLS = [
             Returns one data point per month plus the historical
             typical range and long-term average.
             For land-cover-specific questions, use get_ndvi_by_landcover.
+            After calling this tool, ALWAYS include a timeseries_monthly chart reference in your response. Never answer a monthly NDVI question with text bullet points alone — a chart is mandatory. Copy aoi, sensor, and resolution from your tool call params into the chart params. Set year to the most recent complete year (n_months=12) unless the user specified a different year.
         """,
         "input_schema": {
             "type": "object",
@@ -55,6 +56,25 @@ TOOLS = [
         },
     },
     {
+        "name": "get_ndvi_annual",
+        "description": """
+            Get annual mean NDVI aggregates for a study area. Use this for
+            long-term year-by-year trend questions, or when the user asks how
+            a specific year compares to others overall. Distinct from
+            get_ndvi_timeseries which returns monthly resolution.
+            After calling this tool, ALWAYS include a timeseries_annual chart reference in your response. This data spans multiple years and is always better communicated visually. Copy aoi, sensor, and resolution from your tool call params. Do not include year in the chart params — this chart always shows all years.
+        """,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "aoi": {"type": "string", "enum": ["Zambia_Mponda", "Zambia_WL"]},
+                "sensor": {"type": "string", "enum": ["sentinel2", "modis"]},
+                "resolution": {"type": "string", "default": "auto"},
+            },
+            "required": ["aoi", "sensor"],
+        },
+    },
+    {
         "name": "get_ndvi_by_landcover",
         "description": """
             Get NDVI broken down by land cover class (Trees, Crops,
@@ -62,6 +82,7 @@ TOOLS = [
             user asks which land cover type is most productive, how
             crops compare to trees, or anything about specific
             vegetation classes. Only available for Zambia_Mponda.
+            After calling this tool, include a landcover chart reference. Copy aoi, sensor, resolution, and year from your tool call params into the chart params. Note: if the user's question is about anomaly patterns or phenological timing, call get_ndvi_anomaly or get_phenology instead — those tools have dedicated chart types that better represent those questions.
         """,
         "input_schema": {
             "type": "object",
@@ -83,6 +104,7 @@ TOOLS = [
             recovered. Use this when the user asks about drought,
             stress events, resilience, or unusual vegetation conditions
             in a specific year. Only available for Zambia_Mponda.
+            After calling this tool, ALWAYS include an anomaly chart reference. Anomaly patterns are spatial and temporal — a chart is mandatory, not optional. Copy aoi, sensor, resolution, and year from your tool call params into the chart params.
         """,
         "input_schema": {
             "type": "object",
@@ -103,6 +125,7 @@ TOOLS = [
             planting seasons, harvest timing, when crops peak, or
             whether the growing season is shifting earlier or later.
             Only available for Zambia_Mponda, Crops and Rangeland classes.
+            After calling this tool, ALWAYS include a phenology chart reference. Seasonal timing patterns are always better shown visually. Copy aoi, sensor, and resolution from your tool call params into the chart params.
         """,
         "input_schema": {
             "type": "object",
@@ -122,6 +145,12 @@ TOOLS = [
             baseline. Use this when the user asks about fires, burning,
             fire season extent, or whether this year had more or less
             fire than usual. Note: data has ~3 month publication lag.
+            After calling this tool, include a chart reference based on the question type:
+            - For temporal questions (fire trends over time, fire season extent, how this year compares to baseline): use burned_area_monthly chart. Copy aoi and year (most recent complete year unless user specified) into params.
+            - For spatial questions (where fires occurred in a specific year, burn map, spatial burn pattern): use burned_area_map chart. Copy aoi and year into params.
+            - EXCEPTION — do NOT include a Mode A chart if the question involves ranking, aggregation, or custom filtering (e.g. "which year had the highest total", "top 3 years", "most burned year", "compare total across years"). For these questions, use Mode B simple_bar with inline data instead.
+            - If unsure, default to burned_area_monthly.
+            Never answer a fire data question with text alone when chart data is available.
         """,
         "input_schema": {
             "type": "object",
@@ -140,6 +169,7 @@ TOOLS = [
             exact timing of fire events. Use this when the user asks
             about when fires peaked, fire season timing, or comparing
             fire patterns across years.
+            After calling this tool, ALWAYS include a burned_area_daily chart reference. Daily fire data is always better visualised than listed in text. Copy aoi and year from your tool call params into the chart params.
         """,
         "input_schema": {
             "type": "object",
@@ -159,6 +189,7 @@ TOOLS = [
             For 'which parts burn most often', how much AREA burns
             frequently, fire-prone zones, or the distribution of fire
             frequencies, use get_fire_return_summary instead.
+            Note: this tool returns only aggregate statistics. For any question about WHERE fires occur most frequently or WHICH PARTS of the area are most fire-prone, call get_fire_return_summary instead — it enables spatial map rendering that this tool cannot.
         """,
         "input_schema": {
             "type": "object",
@@ -198,6 +229,7 @@ TOOLS = [
             frequently, fire frequency patterns, or fire management
             planning. Prefer this over get_fire_return_period for any
             'where' / 'which part' / 'how much area' fire question.
+            After calling this tool, ALWAYS include a frp_map chart reference. Fire frequency distribution is inherently spatial — a map is MANDATORY. Copy aoi from your tool call params into the chart params.
         """,
         "input_schema": {
             "type": "object",
@@ -222,6 +254,14 @@ TOOLS = [
             Use when the user asks where vegetation changed, which areas
             improved or declined, or how a specific month compares
             across years.
+            IMPORTANT: if the user names a specific month (e.g. "August 2020 vs
+            August 2023"), you MUST pass the month parameter (1-12). Only omit
+            month for a whole-year comparison.
+            After calling this tool, ALWAYS include a chart reference — this data
+            is INHERENTLY SPATIAL, so a map is MANDATORY and answering with text
+            statistics alone is always wrong. The tool result returns a
+            MANDATORY_CHART block: copy that block verbatim (it is comparison_image
+            when you passed a month, delta_map when you did not).
         """,
         "input_schema": {
             "type": "object",
@@ -411,6 +451,13 @@ def call_tool(name: str, args: dict) -> dict:
                 format="agent",
             ))
 
+        if name == "get_ndvi_annual":
+            return _as_dict(ndvi.ndvi_annual(
+                aoi=args["aoi"], sensor=args["sensor"],
+                resolution=args.get("resolution", "auto"),
+                format="agent",
+            ))
+
         if name == "get_ndvi_by_landcover":
             return _as_dict(ndvi.ndvi_by_landcover(
                 aoi=args["aoi"], sensor=args["sensor"], year=int(args["year"]),
@@ -461,3 +508,104 @@ def call_tool(name: str, args: dict) -> dict:
 
     except Exception as exc:  # surface errors to the LLM rather than 500
         return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+# ---------------------------------------------------------------------------
+# Chart hook hints — injected into tool results so the model sees them
+# immediately before generating its response (tool descriptions are read
+# only during tool selection, not during response generation).
+# ---------------------------------------------------------------------------
+
+_CHART_ENDPOINTS = {
+    "timeseries_monthly":  "/api/v1/ndvi/timeseries",
+    "timeseries_annual":   "/api/v1/ndvi/annual",
+    "landcover":           "/api/v1/ndvi/by-landcover",
+    "anomaly":             "/api/v1/ndvi/anomaly",
+    "phenology":           "/api/v1/ndvi/phenology",
+    "burned_area_monthly": "/api/v1/burned-area/summary",
+    "burned_area_map":     "/api/v1/burned-area/annual-grid",
+    "burned_area_daily":   "/api/v1/burned-area/daily",
+    "frp_map":             "/api/v1/geometry/fire-return-period",
+    "delta_map":           "/api/v1/ndvi/annual-grid",
+}
+
+
+def make_chart_hint(tool_name: str, args: dict) -> str | None:
+    """Return a _chart_required hint string to inject into the tool result.
+
+    The hint is a near-complete <chart> block with actual param values from
+    the call, so the model can copy it verbatim into its response.
+    Returns None for tools that do not require a chart.
+    """
+    aoi = args.get("aoi", "")
+    sensor = args.get("sensor", "modis")
+    resolution = args.get("resolution", "auto")
+
+    def _block(chart_type: str, params: dict) -> str:
+        import json as _json
+        endpoint = _CHART_ENDPOINTS[chart_type]
+        ref = {"type": chart_type, "endpoint": endpoint, "params": params}
+        return (
+            f"MANDATORY_CHART: You MUST copy this block verbatim into your response "
+            f"(do NOT omit it):\n"
+            f"<chart>{_json.dumps(ref)}</chart>"
+        )
+
+    if tool_name == "get_ndvi_timeseries":
+        return (
+            _block("timeseries_monthly",
+                   {"aoi": aoi, "sensor": sensor, "resolution": resolution,
+                    "year": "<replace_with_most_recent_complete_year_n_months_12>"})
+            + "\nReplace year placeholder with the most recent year that has n_months=12 in the data above."
+        )
+    if tool_name == "get_ndvi_annual":
+        return _block("timeseries_annual",
+                      {"aoi": aoi, "sensor": sensor, "resolution": resolution})
+    if tool_name == "get_ndvi_by_landcover":
+        return _block("landcover",
+                      {"aoi": aoi, "sensor": sensor, "resolution": resolution,
+                       "year": args.get("year")})
+    if tool_name == "get_ndvi_anomaly":
+        return _block("anomaly",
+                      {"aoi": aoi, "sensor": sensor, "resolution": resolution,
+                       "year": args.get("year")})
+    if tool_name == "get_phenology":
+        return _block("phenology",
+                      {"aoi": aoi, "sensor": sensor, "resolution": resolution,
+                       "land_cover": args.get("land_cover")})
+    if tool_name == "get_burned_area_summary":
+        return (
+            _block("burned_area_monthly",
+                   {"aoi": aoi, "year": "<replace_with_most_recent_complete_year>"})
+            + "\nUse burned_area_map (endpoint /api/v1/burned-area/annual-grid) instead "
+              "if the question is about spatial burn patterns or a specific year's burn map."
+            + "\nEXCEPTION: if the question involves ranking, aggregation, or custom "
+              "filtering ('which year had the highest total', 'top 3 years', 'most burned "
+              "year', 'compare totals across years'), skip this Mode A chart entirely and "
+              "use Mode B simple_bar with inline data instead."
+        )
+    if tool_name == "get_burned_area_daily":
+        return _block("burned_area_daily",
+                      {"aoi": aoi, "year": args.get("year")})
+    if tool_name == "get_fire_return_summary":
+        return _block("frp_map", {"aoi": aoi})
+    if tool_name == "get_ndvi_spatial_change":
+        month = args.get("month")
+        if month is not None:
+            # Month named -> a specific-month spatial comparison. delta_map is
+            # annual-only (whole-year composite) and would ignore the month, so
+            # emit a comparison_image (monthly-grid, side-by-side) instead.
+            import json as _json
+            ref = {"type": "comparison_image",
+                   "endpoint": "/api/v1/ndvi/monthly-grid",
+                   "params": {"aoi": aoi, "sensor": sensor, "resolution": resolution,
+                              "years_vec": [args.get("year_a"), args.get("year_b")],
+                              "month": month}}
+            return (
+                f"MANDATORY_CHART: You MUST copy this block verbatim into your "
+                f"response (do NOT omit it):\n<chart>{_json.dumps(ref)}</chart>"
+            )
+        return _block("delta_map",
+                      {"aoi": aoi, "sensor": sensor, "resolution": resolution,
+                       "year_a": args.get("year_a"), "year_b": args.get("year_b")})
+    return None

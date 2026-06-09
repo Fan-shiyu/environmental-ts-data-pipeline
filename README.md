@@ -17,7 +17,7 @@ Replaces the manual GEE JavaScript workflow (preserved in [reference/](reference
 
 ## What's in here (end-to-end flow)
 
-![Architecture: GEE fetch → Pass A/B preprocessing → deploy → FastAPI data service + AI agent, automated by GitHub Actions](docs/architecture.png)
+![Architecture: GEE fetch → Pass A/B preprocessing → deploy → FastAPI data service + AI agent, automated by GitHub Actions](docs/architecture.svg)
 
 Three layers:
 
